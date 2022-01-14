@@ -296,7 +296,6 @@ wire  [8:0] sd_buff_addr;
 wire  [7:0] sd_buff_dout;
 wire  [7:0] sd_buff_din[1];
 wire        sd_buff_wr;
-//wire        sd_ack_conf;
 
 wire        img_mounted;
 wire        img_readonly;
@@ -310,9 +309,9 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 
 	.buttons(buttons),
 	.status(status),
-   .forced_scandoubler(forced_scandoubler),
-   .gamma_bus(gamma_bus),
-   .direct_video(direct_video),
+	.forced_scandoubler(forced_scandoubler),
+	.gamma_bus(gamma_bus),
+	.direct_video(direct_video),
 
 
 	.ps2_key(ps2_key),
@@ -327,7 +326,6 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.sd_rd(sd_rd),
 	.sd_wr(sd_wr),
 	.sd_ack(sd_ack),
-//	.sd_ack_conf(sd_ack_conf),
 	.sd_buff_addr(sd_buff_addr),
 	.sd_buff_dout(sd_buff_dout),
 	.sd_buff_din(sd_buff_din),
@@ -339,8 +337,8 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 
 	.joystick_0(joy1),
 	.joystick_1(joy2),
-   .joystick_l_analog_0(joya1),
-   .joystick_l_analog_1(joya2),
+	.joystick_l_analog_0(joya1),
+	.joystick_l_analog_1(joya2)
 );
 
 /////////////////  RESET  /////////////////////////
@@ -545,7 +543,7 @@ ElectronFpga_core Electron
 
 	.joystick2_x(   acorn_ajoy2[7:0]),
 	.joystick2_y(   acorn_ajoy2[15:8]),
-	.joystick2_fire(acorn_joy2[4]),
+	.joystick2_fire(acorn_joy2[4])
 /*
 	.m128_mode(m128),
 	.copro_mode(|status[6:5])*/
@@ -561,15 +559,8 @@ assign AUDIO_S = 0;
 wire hs, vs, hblank, vblank, ce_pix, clk_sel;
 wire [3:0] r,g,b;
 
-//assign CLK_VIDEO = clk_16;
 assign CLK_VIDEO = clk_64;
 
-/*
-reg ce_pix2;
-always @(posedge CLK_VIDEO) begin
-	ce_pix2 <=  !ce_pix2;
-end
-*/
 
 reg ce_pix2;
 always @(posedge CLK_VIDEO ) begin
@@ -589,24 +580,20 @@ assign VGA_SL = sl[1:0];
 
 
 
-
-
 video_mixer #(.GAMMA(1)) video_mixer
 (
    .*,
 
    .CLK_VIDEO(CLK_VIDEO),
    .ce_pix(ce_pix2),
-   //.ce_pix(ce_pix),
 
-	.hq2x(scale==1),
+   .hq2x(scale==1),
 
 
-	.R({r,r}),
-	.G({g,g}),
-	.B({b,b}),
+   .R({r,r}),
+   .G({g,g}),
+   .B({b,b}),
 
-   // Positive pulses.
    .HSync(hs),
    .VSync(vs),
    .HBlank(hblank),
