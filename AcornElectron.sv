@@ -520,7 +520,7 @@ ElectronFpga_core Electron
 	.caps_led(),
 	.motor_led(),
 	
-	.cassette_in(tape_adc),
+	.cassette_in(adc_cassette_bit ),
 	.cassette_out(),
 	//     -- Format of Video
    //     -- 00 - sRGB - interlaced
@@ -656,17 +656,63 @@ end
 
 
 
-wire tape_adc, tape_adc_act;
-ltc2308_tape ltc2308_tape
+/////////////////////// ADC Module  //////////////////////////////
+
+
+wire [11:0] adc_data;
+wire        adc_sync;
+reg [11:0] adc_value;
+reg adc_sync_d;
+
+integer ii=0;
+reg [11:0] adc_val[0:511];
+reg [21:0] adc_total = 0;
+reg [11:0] adc_avg;
+
+reg adc_cassette_bit;
+
+
+// interface to ADC via framework
+//
+ltc2308 #(1, 48000, 50000000) adc_input		// mono, ADC_RATE = 48000, CLK_RATE = 50000000
 (
+	.reset(reset),
 	.clk(CLK_50M),
+
 	.ADC_BUS(ADC_BUS),
-	.dout(tape_adc),
-	.active(tape_adc_act)
+	.dout(adc_data),
+	.dout_sync(adc_sync)
 );
 
+// when data arrives:
+//		- latch it in adc_value
+//		- keep track of a running average across 512 samples
+//
+//		-> this average acts as a high-pass filter above roughly 100 Hz while retaining
+//		 	while retaining very high frequency response, for possible future fast-load techniques
+//
+always @(posedge CLK_50M) begin
 
+	adc_sync_d<=adc_sync;
+	if(adc_sync_d ^ adc_sync) begin
+		adc_value <= adc_data;					// latch in current value, adc_Value
+		
+		adc_val[0] <= adc_value;				
+		adc_total  <= adc_total - adc_val[511] + adc_value;
 
+		for (ii=0; ii<511; ii=ii+1)
+			adc_val[ii+1] <= adc_val[ii];
+			
+		adc_avg <= adc_total[20:9];			// update average value every fetch
+		
+		if (adc_value < (adc_avg - 100))		// flip the cassette bit if > 0.1V from average
+			adc_cassette_bit <= 1;				// note that original CoCo reversed polarity
+
+		if (adc_value > (adc_avg + 100))
+			adc_cassette_bit <= 0;
+		
+	end
+end
 
 
 
