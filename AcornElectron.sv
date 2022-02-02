@@ -175,7 +175,7 @@ assign {UART_RTS, UART_TXD, UART_DTR} = 0;
 assign {SDRAM_DQ, SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 'Z;
 assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = 0;
  
-assign LED_USER  = ioctl_download | (vsd_sel & sd_act);
+assign LED_USER  = cas_relay| ioctl_download | (vsd_sel & sd_act);
 assign LED_DISK  = {1'b1,~vsd_sel & sd_act};
 assign LED_POWER = 0;
 
@@ -196,20 +196,24 @@ assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
 parameter CONF_STR = {
 	"AcornElectron;;",
 	"-;",
-//	"S,VHD;",
+	"S0,VHD;",
 //	"OC,Autostart,Yes,No;",
 	"-;",
 	"O89,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	"O35,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;", 
 	"OA,Swap Joysticks,No,Yes;",
-//	"OL,D-Pad Joystick emu,No,Yes;",
+	"-;",
+	"OC,Tape Input,File,ADC;",
+	"H0F2,UEF,Load Cassette;",
+	"H0TF,Stop & Rewind;",
+	"OD,Monitor Tape Sound,No,Yes;",
 	"-;",
 //	"O4,Model,B(MOS6502),Master(R65SC12);",
 //	"O56,Co-Processor,None,MOS65C02;",
 //	"O78,VIDEO,sRGB-interlaced,sRGB-non-interlaced,SVGA-50Hz,SVGA-60Hz;",
 	"-;",
 	"R0,Reset;",
-	"JA,Fire;",
+	"JA,Fire,Up,Down;",
 	"V,v",`BUILD_DATE
 };
 
@@ -248,7 +252,8 @@ pll pll
 	.outclk_4(clk_48),
 	.outclk_5(clk_96),
 	.outclk_6(clk_80),
-	.outclk_7(clk_64)
+	.outclk_7(clk_64),
+	.locked(locked)
 );
 
 /*
@@ -313,6 +318,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.gamma_bus(gamma_bus),
 	.direct_video(direct_video),
 
+	.status_menumask({status[12]}),
 
 	.ps2_key(ps2_key),
 
@@ -343,7 +349,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 
 /////////////////  RESET  /////////////////////////
 
-wire reset = RESET | status[0] | buttons[1] | (~status[12] & img_mounted);
+wire reset = RESET | status[0] | buttons[1] ;
 
 ////////////////  MEMORY  /////////////////////////
 
@@ -518,9 +524,10 @@ ElectronFpga_core Electron
 	.SDSS(sdss),
 
 	.caps_led(),
-	.motor_led(),
+	.motor_led(cas_relay),
 	
-	.cassette_in(adc_cassette_bit ),
+	//.cassette_in(status[12] ? adc_cassette_bit : casdout ),
+	.cassette_in( casdout ),
 	.cassette_out(),
 	//     -- Format of Video
    //     -- 00 - sRGB - interlaced
@@ -550,8 +557,10 @@ ElectronFpga_core Electron
 );
 
 wire  audio_snl,audio_snr;
+wire [11:0] sound = {12{audio_snl}};
+wire [15:0] sound_pad =  {1'b0,sound[11:8], sound[7] ^ (status[13] ? (status[12] ? adc_cassette_bit : casdout) : 1'b0), sound[6:0], 3'b0};
 
-assign AUDIO_L = {16{audio_snl}};
+assign AUDIO_L = sound_pad;
 assign AUDIO_R = {16{audio_snr}};
 assign AUDIO_MIX = 0;
 assign AUDIO_S = 0;
@@ -715,6 +724,63 @@ always @(posedge CLK_50M) begin
 end
 
 
+wire casdout;
+wire cas_relay;
+
+
+
+wire locked;
+wire [24:0] sdram_addr;
+wire [7:0] sdram_data;
+wire sdram_rd;
+wire load_tape = ioctl_index[5:0] == 2;
+reg [24:0] tape_end;
+
+sdram sdram
+(
+	.*,
+	.init(~locked),
+	.clk(clk_sys),
+	.addr(ioctl_download ? ioctl_addr : sdram_addr),
+	.wtbt(0),
+	.dout(sdram_data),
+	.din(ioctl_dout),
+	.rd(sdram_rd),
+	.we(ioctl_wr & load_tape),
+	.ready()
+);
+
+reg [23:0] stp = 24'd6666;
+reg oldup;
+reg olddown;
+always @(posedge clk_sys) begin
+oldup<=joy1[4];
+olddown<=joy1[5];
+
+	if (~oldup & joy1[4])
+		stp<=stp+24'd100;
+	if (~olddown & joy1[5])
+		stp<=stp-24'd100;
+end
+
+always @(posedge clk_sys) begin
+ if (load_tape) tape_end <= ioctl_addr;
+end
+
+cassette cassette(
+  .clk(clk_sys),
+
+  .rewind(status[15] | (load_tape&ioctl_download)),
+  .en(cas_relay),
+  .stp(stp),
+  .sdram_addr(sdram_addr),
+  .sdram_data(sdram_data),
+  .sdram_rd(sdram_rd),
+
+  .tape_end(tape_end),
+  .data(casdout)
+//   .status(tape_status)
+);
 
 
 

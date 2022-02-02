@@ -15,7 +15,8 @@ module pll (
 		output wire  outclk_4, // outclk4.clk
 		output wire  outclk_5, // outclk5.clk
 		output wire  outclk_6, // outclk6.clk
-		output wire  outclk_7  // outclk7.clk
+		output wire  outclk_7, // outclk7.clk
+		output wire  locked    //  locked.export
 	);
 
 	pll_0002 pll_inst (
@@ -29,7 +30,7 @@ module pll (
 		.outclk_5 (outclk_5), // outclk5.clk
 		.outclk_6 (outclk_6), // outclk6.clk
 		.outclk_7 (outclk_7), // outclk7.clk
-		.locked   ()          // (terminated)
+		.locked   (locked)    //  locked.export
 	);
 
 endmodule
@@ -72,7 +73,7 @@ endmodule
 // Retrieval info: 	<generic name="gui_feedback_clock" value="Global Clock" />
 // Retrieval info: 	<generic name="gui_fractional_cout" value="32" />
 // Retrieval info: 	<generic name="gui_dsm_out_sel" value="1st_order" />
-// Retrieval info: 	<generic name="gui_use_locked" value="false" />
+// Retrieval info: 	<generic name="gui_use_locked" value="true" />
 // Retrieval info: 	<generic name="gui_en_adv_params" value="false" />
 // Retrieval info: 	<generic name="gui_number_of_clocks" value="8" />
 // Retrieval info: 	<generic name="gui_multiply_factor" value="1" />
