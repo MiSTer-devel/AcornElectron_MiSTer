@@ -216,7 +216,7 @@ parameter CONF_STR = {
 //	"O78,VIDEO,sRGB-interlaced,sRGB-non-interlaced,SVGA-50Hz,SVGA-60Hz;",
 	"-;",
 	"R0,Reset;",
-	"JA,Fire,Up,Down;",
+	"JA,Fire;",
 	"V,v",`BUILD_DATE
 };
 
@@ -529,8 +529,7 @@ ElectronFpga_core Electron
 	.caps_led(),
 	.motor_led(cas_relay),
 	
-	//.cassette_in(status[12] ? adc_cassette_bit : casdout ),
-	.cassette_in( casdout ),
+	.cassette_in(status[12] ? adc_cassette_bit : casdout ),
 	.cassette_out(),
 	//     -- Format of Video
    //     -- 00 - sRGB - interlaced
@@ -753,18 +752,7 @@ sdram sdram
 	.ready()
 );
 
-reg [23:0] stp = 24'd6666;
-reg oldup;
-reg olddown;
-always @(posedge clk_sys) begin
-oldup<=joy1[4];
-olddown<=joy1[5];
 
-	if (~oldup & joy1[4])
-		stp<=stp+24'd100;
-	if (~olddown & joy1[5])
-		stp<=stp-24'd100;
-end
 
 always @(posedge clk_sys) begin
  if (load_tape) tape_end <= ioctl_addr;
