@@ -4,8 +4,6 @@ module cassette(
   input clk,
   input rewind,
   input en,
-
-  input [23:0] stp,
   
   output reg [24:0] sdram_addr,
   input [7:0] sdram_data,

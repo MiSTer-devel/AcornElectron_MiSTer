@@ -763,7 +763,6 @@ cassette cassette(
 
   .rewind(status[15] | (load_tape&ioctl_download)),
   .en(cas_relay),
-  .stp(stp),
   .sdram_addr(sdram_addr),
   .sdram_data(sdram_data),
   .sdram_rd(sdram_rd),
