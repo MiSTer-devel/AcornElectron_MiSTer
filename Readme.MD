@@ -2,16 +2,33 @@
 
 Port by David Wood - oldgit
 
+
+
+
 ## Introduction
 
 This is a port of [ElctronFPGA](https://github.com/hoglet67/ElectronFpga) by David Banks, Mike Sterling. They have a good
 description of the project here:   [Acorn Electron FPGA Project](https://www.mups.co.uk/post/2017/07/acorn-electron-fpga-project/)
 
+## MMC Operation
+
+Look for the ELK version of the beeb.mb and put it on the sdcard as boot.vhd
+
+## Cassette Operation
+
+Type Ctrl-F10 and boot into a prompt (not the MMC). Load a tape through the OSD, then type:
+
+```
+*TAPE
+CHAIN""
+```
+That will start the tape loader.
+
+
+## Notes from David Wood:
+
 
 I used the front end for the BBC Micro by Sorgelig and adapted it for this port.
-
-As usual with a first port from me it's not perfect. It is fixed in 60hz video
-my clumsy attempt at having a variable video clock is not working yet.
 
 On start up you will need to ctrl-Break to clear the garbage on the screen. -- fix me
 
