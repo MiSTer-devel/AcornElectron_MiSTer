@@ -93,7 +93,11 @@ entity ElectronULA is
 		  joystick1_fire   : in std_logic;
 		  joystick2_x   : in std_logic_vector(7 downto 0);
 		  joystick2_y   : in std_logic_vector(7 downto 0);
-		  joystick2_fire   : in std_logic
+		  joystick2_fire   : in std_logic;
+		  
+		  
+		  h_cnt: out std_logic_vector(10  downto 0);
+		  v_cnt: out std_logic_vector( 9  downto 0)
 
         );
 end;
@@ -1134,7 +1138,8 @@ begin
     blue  <= (others => ttxt_b_out) when mode7_enable = '1' else
              blue_int;
 
-				 
+	h_cnt<=h_count;
+	v_cnt<=v_count;
 	 -- alanswx -- for some reason this code set's vsync to 1 when it is in
 	 -- 15khz mode, which breaks the MiSTer scaler. For now we are just going to
 	 -- get rid of the logic.

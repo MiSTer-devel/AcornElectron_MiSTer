@@ -552,7 +552,11 @@ ElectronFpga_core Electron
 
 	.joystick2_x(   acorn_ajoy2[7:0]),
 	.joystick2_y(   acorn_ajoy2[15:8]),
-	.joystick2_fire(acorn_joy2[4])
+	.joystick2_fire(acorn_joy2[4]),
+	
+	
+	.h_cnt(h_cnt),
+	.v_cnt(v_cnt)
 /*
 	.m128_mode(m128),
 	.copro_mode(|status[6:5])*/
@@ -601,9 +605,9 @@ video_mixer #(.GAMMA(1)) video_mixer
    .hq2x(scale==1),
 
 
-   .R({r,r}),
-   .G({g,g}),
-   .B({b,b}),
+   .R(o_r),
+   .G(o_g),
+   .B(o_b),
 
    .HSync(hs),
    .VSync(vs),
@@ -772,6 +776,35 @@ cassette cassette(
 //   .status(tape_status)
 );
 
+wire [10:0] h_cnt;
+wire [9:0]  v_cnt;
+
+wire [7:0] o_r;
+wire [7:0] o_g;
+wire [7:0] o_b;
+
+overlay  #( .RGB(24'hEEEE22) ) overlay
+(
+	.reset(reset),
+	.i_r({r,r}),
+   .i_g({g,g}),
+   .i_b({b,b}),
+
+	.i_clk(clk_64/*clk_sys*/),
+	.i_pix(ce_pix2),
+	
+	.hcnt(h_cnt[9:0]),
+	.vcnt(v_cnt),
+	
+	.o_r(o_r),
+	.o_g(o_g),
+	.o_b(o_b),
+	
+	.pos(sdram_addr),
+	.max(tape_end),
+	
+	.ena(cas_relay)
+);
 
 
 endmodule

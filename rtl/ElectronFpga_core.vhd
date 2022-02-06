@@ -96,7 +96,9 @@ entity ElectronFpga_core is
 		  joystick1_fire   : in std_logic;
 		  joystick2_x   : in std_logic_vector(7 downto 0);
 		  joystick2_y   : in std_logic_vector(7 downto 0);
-		  joystick2_fire   : in std_logic
+		  joystick2_fire   : in std_logic;
+		  h_cnt: out std_logic_vector(10  downto 0);
+		  v_cnt: out std_logic_vector( 9  downto 0)
 
     );
 end;
@@ -226,7 +228,10 @@ begin
 		  joystick1_fire  =>joystick1_fire,
 		  joystick2_x  =>joystick2_x,
 		  joystick2_y   =>joystick2_y,
-		  joystick2_fire  =>joystick2_fire
+		  joystick2_fire  =>joystick2_fire,
+		  
+		  h_cnt => h_cnt,
+		  v_cnt => v_cnt
 
     );
 

@@ -1,4 +1,5 @@
 set_global_assignment -name VHDL_FILE rtl/ps2kybrd/keyboard.vhd
+set_global_assignment -name QIP_FILE rtl/cassetteoverlay/cassetteoverlay.qip
 set_global_assignment -name VHDL_FILE rtl/T6502/T65_Pack.vhd
 set_global_assignment -name VHDL_FILE rtl/T6502/T65_MCode.vhd
 set_global_assignment -name VHDL_FILE rtl/T6502/T65_ALU.vhd
