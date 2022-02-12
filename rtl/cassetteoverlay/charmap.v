@@ -33,7 +33,7 @@ module charmap (
 );
 
 // Character map
-wire [2:0] chpos_x = 3'd7 - hcnt[2:0];
+wire [2:0] chpos_x = 3'd7 - (hcnt[2:0] - 10'd1);
 wire [2:0] chpos_y = vcnt[2:0];
 wire [5:0] chram_x = hcnt[8:3];
 wire [5:0] chram_y = vcnt[8:3];

@@ -23,7 +23,9 @@ module overlay #(
 	input ena,
 
 	input [24:0] max,
-	input [24:0] pos
+	input [24:0] pos,
+        input [7:0] tape_data
+
 
 );
 
@@ -38,11 +40,21 @@ wire [11:0] chrom_addr;
 wire [7:0] chrom_data_out;
 wire [7:0] chmap_data_out;
 
-wire in_box = hcnt < 8*36 & vcnt < 10*10; 
+wire [9:0] new_h = hcnt - 10'd250;
+wire [9:0] new_v = vcnt - 10'd10;
 
-assign o_r= ~ena | ~in_box ? i_r : (charmap_a ) ? RGB[23:16] : i_r >> 2;
-assign o_g= ~ena |~in_box ? i_g : (charmap_a ) ? RGB[15:8]  : i_g >> 2;
-assign o_b= ~ena | ~in_box ? i_b : (charmap_a ) ? RGB[7:0]   : i_b >> 2;
+wire in_box = new_h > 'd8*'d5 && new_h < 'd8*('d24+'d3) && new_v > 'd8*1 && new_v < 'd8*'d12;
+
+assign o_r = o_r_a | meter_red;
+wire [7:0] o_r_a;
+assign o_g = o_g_a | meter_green;
+wire [7:0] o_g_a;
+assign o_b = o_b_a | meter_blue;
+wire [7:0] o_b_a;
+assign o_r_a= ~ena | ~in_box ? i_r : (charmap_a ) ? RGB[23:16] : i_r >> 2;
+assign o_g_a= ~ena | ~in_box ? i_g : (charmap_a ) ? RGB[15:8]  : i_g >> 2;
+assign o_b_a= ~ena | ~in_box ? i_b : (charmap_a ) ? RGB[7:0]   : i_b >> 2;
+
 
 reg [24:0] pos_r;
 reg [11:0] wr_addr;
@@ -50,8 +62,7 @@ reg [7:0] wr_data;
 reg wheel_state;
 reg [1:0] state;
 
-// this is an increment / 16 -- we have 10 now, so 
-// we need to make the bar 6 wider - AJS TODO
+// this is an increment / 16 
 wire [24:0] increment={4'b0000,max[23:4]};
 reg [24:0] inc_pos='d0;
 reg [4:0] blocks;
@@ -141,16 +152,48 @@ begin
 			state<=2'b00;
 		end
 	endcase
-		
-
 end
+
+
+//
+//  some code to draw a waveform
+//
+reg [255:0] seq;
+wire [7:0] meter_red;
+wire [7:0] meter_green;
+wire [7:0] meter_blue;
+//255,127, - 84
+//
+// one line:
+//assign meter_green = ena & in_box & new_v == db[7:2] & new_v > 'd88 - db[7:2]  & new_v > 'd40  ? 8'h80: 8'h00;
+//assign meter_red   = ena & in_box & new_v == db[7:2] & new_v > 'd88 - db[7:2]  & new_v < 'd60  ? 8'h80: 8'h00;
+
+// bars:
+//assign meter_green = ena & in_box &  new_v > 'd88 - db[7:2]  & new_v > 'd40  ? 8'h80: 8'h00;
+//assign meter_red   = ena & in_box &  new_v > 'd88 - db[7:2]  & new_v < 'd60  ? 8'h80: 8'h00;
+
+// white:
+assign meter_red=meter_blue;
+assign meter_green=meter_blue;
+assign meter_blue = ena & in_box &  new_h > 'd195 & new_h < 'd205 & new_v > 'd88 - tape_data[7:2] & new_v < 'd80  ? 8'hFF: 8'h00;
+
+
+wire [6:0] idx = new_h[8:2] ;
+wire [7:0] db = seq >> { idx, 2'b0 };
+
+always @(posedge i_pix)
+begin
+        if (vcnt==0)
+                seq <= { seq[247:0], tape_data};
+end
+
 
 charmap casval
 (
 	.clk(i_pix),
 	.reset(reset),
-	.hcnt(hcnt),
-	.vcnt(vcnt),
+	.hcnt(new_h),
+	.vcnt(new_v),
 	.chrom_data_out(chrom_data_out),
 	.chmap_data_out(chmap_data_out),
 	.chram_addr(chram_addr),

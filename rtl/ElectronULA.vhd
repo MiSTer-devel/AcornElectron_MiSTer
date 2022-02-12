@@ -88,16 +88,18 @@ entity ElectronULA is
         turbo          : in std_logic_vector(1 downto 0);
         turbo_out      : out std_logic_vector(1 downto 0);
 
-		  		  joystick1_x   : in std_logic_vector(7 downto 0);
-		  joystick1_y   : in std_logic_vector(7 downto 0);
-		  joystick1_fire   : in std_logic;
-		  joystick2_x   : in std_logic_vector(7 downto 0);
-		  joystick2_y   : in std_logic_vector(7 downto 0);
-		  joystick2_fire   : in std_logic;
+        -- Joystick Inputs
+	joystick1_x   : in std_logic_vector(7 downto 0);
+	joystick1_y   : in std_logic_vector(7 downto 0);
+	joystick1_fire   : in std_logic;
+	joystick2_x   : in std_logic_vector(7 downto 0);
+	joystick2_y   : in std_logic_vector(7 downto 0);
+	joystick2_fire   : in std_logic;
 		  
 		  
-		  h_cnt: out std_logic_vector(10  downto 0);
-		  v_cnt: out std_logic_vector( 9  downto 0)
+        -- Output to sync overlay
+	h_cnt: out std_logic_vector(10  downto 0);
+	v_cnt: out std_logic_vector( 9  downto 0)
 
         );
 end;
@@ -1342,42 +1344,42 @@ begin
         -- disable mode 7
         mode7_enable <= '0';
 
-        -- JOYSTICK HANDLING - emulation of joystick part of Plus 1
+-- JOYSTICK HANDLING - emulation of joystick part of Plus 1
 -- from https://github.com/Sector14/acorn-electron-core
 -- Gary Preston <gary@mups.co.uk>
-	adc : process(clk_16M00, RST_n)
+adc : process(clk_16M00, RST_n)
     begin
         if rising_edge(clk_16M00) then
-			if (addr = x"FC70") then -- read or write and we clear the interrupt
-				plus_1_adc_n_intr <= '1';
-			else
-				plus_1_adc_n_intr <= '0';
-			end if; 
+	  if (addr = x"FC70") then -- read or write and we clear the interrupt
+		plus_1_adc_n_intr <= '1';
+	  else
+		plus_1_adc_n_intr <= '0';
+	  end if; 
 			
-			--
-			--  Do we need to delay the joystick?
-			--
+	  --
+	  --  Do we need to delay the joystick?
+	  --
 
           case adc_chan is 
             -- joy1
             when "0100" => -- ch1 p15 X
-				  		  plus_1_adc_data   <=joystick1_x;
+	  		  plus_1_adc_data   <=joystick1_x;
             when "0101" => -- ch2 p7  Y            
-				  		  plus_1_adc_data   <=joystick1_y;
+	  		  plus_1_adc_data   <=joystick1_y;
 						  
             -- joy2
             when "0110" => -- ch3 p12 X
-				  		  plus_1_adc_data   <=joystick2_x;
+	  		  plus_1_adc_data   <=joystick2_x;
             when "0111" => -- ch4 p4  Y
-				  		  plus_1_adc_data   <=joystick2_y;
+	  		  plus_1_adc_data   <=joystick2_y;
             when others => 
               -- No other mode supported
               plus_1_adc_data <= x"80"; 
           end case;
 	end if;
-	end process;
+     end process;
 
-	plus_1_stat_reg <= '1' & plus_1_adc_n_intr &joystick2_fire & joystick1_fire &"0000";
+plus_1_stat_reg <= '1' & plus_1_adc_n_intr &joystick2_fire & joystick1_fire &"0000";
 
 
 		  

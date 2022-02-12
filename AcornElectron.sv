@@ -783,12 +783,13 @@ wire [7:0] o_r;
 wire [7:0] o_g;
 wire [7:0] o_b;
 
-overlay  #( .RGB(24'hEEEE22) ) overlay
+//overlay  #( .RGB(24'hEEEE22) ) overlay
+overlay  #( .RGB(24'hFFFFFF) ) overlay
 (
 	.reset(reset),
 	.i_r({r,r}),
-   .i_g({g,g}),
-   .i_b({b,b}),
+	.i_g({g,g}),
+	.i_b({b,b}),
 
 	.i_clk(clk_64/*clk_sys*/),
 	.i_pix(ce_pix2),
@@ -802,6 +803,8 @@ overlay  #( .RGB(24'hEEEE22) ) overlay
 	
 	.pos(sdram_addr),
 	.max(tape_end),
+	.tape_data(sdram_data),
+
 	
 	.ena(cas_relay)
 );
