@@ -51,13 +51,14 @@ module emu
 	output        VGA_F1,
 	output [1:0]  VGA_SL,
 	output        VGA_SCALER, // Force VGA scaler
+	output        VGA_DISABLE, // analog out is off
 
 	input  [11:0] HDMI_WIDTH,
 	input  [11:0] HDMI_HEIGHT,
 	output        HDMI_FREEZE,
 
 `ifdef MISTER_FB
-	// Use framebuffer in DDRAM (USE_FB=1 in qsf)
+	// Use framebuffer in DDRAM
 	// FB_FORMAT:
 	//    [2:0] : 011=8bpp(palette) 100=16bpp 101=24bpp 110=32bpp
 	//    [3]   : 0=16bits 565 1=16bits 1555
@@ -185,6 +186,7 @@ assign LED_POWER = 0;
 assign VGA_F1    = 0;
 assign BUTTONS = 0;
 
+assign VGA_DISABLE = 0;
 assign VGA_SCALER = 0;
 assign HDMI_FREEZE = 0;
 
@@ -210,6 +212,7 @@ parameter CONF_STR = {
 	"H0F2,UEF,Load Cassette;",
 	"H0TF,Stop & Rewind;",
 	"OD,Monitor Tape Sound,No,Yes;",
+	"OE,Show Tape Status,Yes,No;",
 	"-;",
 //	"O4,Model,B(MOS6502),Master(R65SC12);",
 //	"O56,Co-Processor,None,MOS65C02;",
@@ -486,6 +489,9 @@ wire [31:0] acorn_joy2 = status[10] ? joy1 : joy2;
 
 wire [15:0] acorn_ajoy1 = status[10] ? { (8'hFF - center_joystick_y2[7:0]),(8'hFF - center_joystick_x2[7:0])} : {(8'hFF - center_joystick_y1[7:0]),(8'hFF - center_joystick_x1[7:0])};
 wire [15:0] acorn_ajoy2 = status[10] ? {(8'hFF - center_joystick_y1[7:0]),(8'hFF - center_joystick_x1[7:0])} : {(8'hFF - center_joystick_y2[7:0]),(8'hFF - center_joystick_y2[7:0])};
+
+
+wire show_cas_overlay = ~status[14];
 
 // analog -127..+127, Y: [15:8], X: [7:0]
 
@@ -806,7 +812,7 @@ overlay  #( .RGB(24'hFFFFFF) ) overlay
 	.tape_data(sdram_data),
 
 	
-	.ena(cas_relay)
+	.ena(cas_relay & show_cas_overlay)
 );
 
 
