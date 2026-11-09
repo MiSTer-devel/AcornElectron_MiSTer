@@ -765,7 +765,7 @@ begin
                     if (addr = x"bfdf" and page_enable = '1' and page(2 downto 1) = "00" and ctrl_caps = '1' and kbd(0) = '0') then
                         turbo_out <= "11";
                     end if;
-						  if (addr = x"FC70") then -- this will set what channel of adc to read
+						  if (addr = x"FC70" and R_W_n = '0') then -- a write selects the ADC channel (reads return the result)
 								adc_chan <= data_in(3 downto 0);
 						  end if; 
                     if (addr(15 downto 8) = x"FE") then
@@ -1379,7 +1379,9 @@ adc : process(clk_16M00, RST_n)
 	end if;
      end process;
 
-plus_1_stat_reg <= '1' & plus_1_adc_n_intr &joystick2_fire & joystick1_fire &"0000";
+-- &FC72: b7 printer busy, b6 ADC /INTR, b5 fire 1, b4 fire 2 (fire bits 0 = pressed), b3-0 read 1
+-- (Electron AUG; MAME bus/electron/plus1.cpp). joystick*_fire are active high.
+plus_1_stat_reg <= '1' & plus_1_adc_n_intr & not joystick1_fire & not joystick2_fire & "1111";
 
 
 		  
