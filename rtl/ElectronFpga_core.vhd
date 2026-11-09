@@ -235,7 +235,7 @@ begin
 
     );
 
-    input : entity work.keyboard port map(
+    kbd_input : entity work.keyboard port map(
         clk        => clk_16M00,
         rst_n      => hard_reset_n, -- to avoid a loop when break pressed!
         ps2_key    => ps2_key,

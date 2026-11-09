@@ -1,0 +1,298 @@
+`timescale 1ns / 1ps
+//============================================================================
+//  Simulation top (Verilator) for the Acorn Electron core.
+//
+//  Stands in for AcornElectron.sv: same memory map, joystick mapping and
+//  tape player, but hps_io, the PLLs, the SDRAM and altsyncram are replaced
+//  by things sim_main.cpp can drive. Keep it in sync with AcornElectron.sv.
+//
+//  The VHDL core (T65, ULA, VIA, keyboard) is converted to Verilog by GHDL
+//  (see Makefile): obj_dir/gen/electron_core.v, top module ElectronFpga_core.
+//
+//  Deliberate differences from AcornElectron.sv:
+//    * one 16 MHz clock (clk_sys = clk_16). vid_mode 00/01 only use that;
+//      the 24/32/33/40 MHz inputs are tied low (Mode 7 / SVGA are off).
+//    * the tape buffer is a behavioural 2 MB array instead of SDRAM
+//    * no cassette overlay (it runs on clk_64), no ADC tape input
+//    * no SD card yet: SDMISO idles high, MMFS sees no card
+//    * CE_PIXEL is every clk_sys: the ULA's pixel clock is 16 MHz
+//============================================================================
+
+module emu (
+	input             clk_sys,          // 16 MHz, toggled by sim_main.cpp
+	input             reset,
+
+	input      [10:0] ps2_key,          // [7:0] code, [8] ext, [9] pressed, [10] toggle
+	input      [31:0] joystick_0,       // hps_io joystick_0 (bit 4 = Fire)
+	input      [31:0] joystick_1,
+	input      [15:0] joystick_l_analog_0, // signed Y [15:8], X [7:0]
+	input      [15:0] joystick_l_analog_1,
+	input             swap_joysticks,   // OSD status[10]
+	input             vid_progressive,  // vid_mode 01 instead of 00
+	input             tape_rewind,      // OSD status[15] Stop & Rewind
+	input             tape_monitor,     // OSD status[13]
+
+	// HPS file transfer: index 0 = ROM (during reset), 2 = tape
+	input             ioctl_download,
+	input             ioctl_wr,
+	input      [24:0] ioctl_addr,
+	input       [7:0] ioctl_dout,
+	input       [7:0] ioctl_index,
+	output            ioctl_wait,
+
+	output      [7:0] VGA_R,
+	output      [7:0] VGA_G,
+	output      [7:0] VGA_B,
+	output            VGA_HS,
+	output            VGA_VS,
+	output            VGA_HB,
+	output            VGA_VB,
+	output            CE_PIXEL,
+
+	output     [15:0] AUDIO_L,
+	output     [15:0] AUDIO_R,
+
+	// debug taps for sim_main.cpp
+	output     [15:0] dbg_cpu_addr,
+	output     [18:0] dbg_mem_addr,
+	output            dbg_mem_we_n,
+	output      [7:0] dbg_mem_din,
+	output            dbg_cas_relay,
+	output            dbg_casdout,
+	output     [24:0] dbg_tape_addr,
+	output     [24:0] dbg_tape_end
+);
+
+assign ioctl_wait = 1'b0;
+
+// ------------------------------------------------------------------ memory
+// Same map as AcornElectron.sv. ext_A[18] = 1: sideways RAM, else ROM.
+
+wire        mem_we_n;
+wire [18:0] mem_addr;
+wire  [7:0] mem_din;
+reg  [16:0] rom_addr;
+reg  [16:0] ram_addr;
+reg   [7:0] rom_data, ram_data;
+wire  [7:0] rom_dout, ram_dout;
+
+always @(*) begin
+	rom_addr[13:0] = mem_addr[13:0];
+	case (mem_addr[18:14])
+		5'b0_01_00: rom_addr[16:14] = 0; // mmfs_swram.rom
+		5'b0_10_00: rom_addr[16:14] = 1; // os100.rom
+		5'b0_10_01: rom_addr[16:14] = 1;
+		5'b0_10_10: rom_addr[16:14] = 2; // Basic2.rom
+		5'b0_10_11: rom_addr[16:14] = 2;
+		5'b0_11_00: rom_addr[16:14] = 3; // pres_ap2_v1_23.rom
+		5'b0_11_01: rom_addr[16:14] = 4;
+		5'b0_11_10: rom_addr[16:14] = 5;
+		5'b0_11_11: rom_addr[16:14] = 6; // M7_191.rom
+		default:    rom_addr[16:14] = 0;
+	endcase
+	case (mem_addr[18:14])
+		5'b0_01_00, 5'b0_10_00, 5'b0_10_01, 5'b0_10_10, 5'b0_10_11,
+		5'b0_11_00, 5'b0_11_01, 5'b0_11_10, 5'b0_11_11: rom_data = rom_dout;
+		default: rom_data = 8'h00;
+	endcase
+	ram_addr[13:0] = mem_addr[13:0];
+	ram_addr[16:14] = mem_addr[16:14];          // slots 0-7 (b1_0x_xx)
+	ram_data = (mem_addr[18:17] == 2'b10) ? ram_dout : 8'h00;
+end
+
+// 112 KB ROM image, writable from ioctl index 0 while in reset
+sim_spram #(8, 17, 114688, "ELK.hex") rom
+(
+	.clock(clk_sys),
+	.address(reset ? ioctl_addr[16:0] : rom_addr),
+	.data(ioctl_dout),
+	.wren(!ioctl_index && ioctl_wr && reset),
+	.q(rom_dout)
+);
+
+reg old_we;
+always @(posedge clk_sys) old_we <= mem_we_n;
+
+sim_spram #(8, 17, 131072, "") ram
+(
+	.clock(clk_sys),
+	.address(ram_addr),
+	.data(mem_din),
+	.wren(mem_addr[18] & old_we & ~mem_we_n),
+	.q(ram_dout)
+);
+
+// --------------------------------------------------------------- joysticks
+// Copied from AcornElectron.sv.
+
+wire [15:0] joya1 = joystick_l_analog_0;
+wire [15:0] joya2 = joystick_l_analog_1;
+wire [31:0] joy1 = joystick_0;
+wire [31:0] joy2 = joystick_1;
+
+wire [9:0] center_joystick_y1 = 8'd128 + joya1[15:8];
+wire [9:0] center_joystick_x1 = 8'd128 + joya1[7:0];
+wire [9:0] center_joystick_y2 = 8'd128 + joya2[15:8];
+wire [9:0] center_joystick_x2 = 8'd128 + joya2[7:0];
+
+wire [31:0] acorn_joy1 = swap_joysticks ? joy2 : joy1;
+wire [31:0] acorn_joy2 = swap_joysticks ? joy1 : joy2;
+
+wire [15:0] acorn_ajoy1 = swap_joysticks ? {(8'hFF - center_joystick_y2[7:0]),(8'hFF - center_joystick_x2[7:0])} : {(8'hFF - center_joystick_y1[7:0]),(8'hFF - center_joystick_x1[7:0])};
+wire [15:0] acorn_ajoy2 = swap_joysticks ? {(8'hFF - center_joystick_y1[7:0]),(8'hFF - center_joystick_x1[7:0])} : {(8'hFF - center_joystick_y2[7:0]),(8'hFF - center_joystick_x2[7:0])};
+
+// -------------------------------------------------------------------- core
+
+wire hs, vs, hblank, vblank, ce_pix;
+wire [3:0] r, g, b;
+wire audio_snl, audio_snr;
+wire cas_relay;
+wire casdout;
+wire [10:0] h_cnt;
+wire [9:0]  v_cnt;
+wire [15:0] cpu_addr;
+
+ElectronFpga_core Electron
+(
+	.clk_16M00(clk_sys),
+	.clk_24M00(1'b0),
+	.clk_32M00(1'b0),
+	.clk_33M33(1'b0),
+	.clk_40M00(1'b0),
+
+	.hard_reset_n(~reset),
+	.ps2_key(ps2_key),
+
+	.video_cepix(ce_pix),
+	.video_red(r),
+	.video_green(g),
+	.video_blue(b),
+	.video_vblank(vblank),
+	.video_hblank(hblank),
+	.video_vsync(vs),
+	.video_hsync(hs),
+
+	.audio_l(audio_snl),
+	.audio_r(audio_snr),
+
+	.ext_nOE(),
+	.ext_nWE(mem_we_n),
+	.ext_nCS(),
+	.ext_A(mem_addr),
+	.ext_Dout(mem_addr[18] ? ram_data : rom_data),
+	.ext_Din(mem_din),
+
+	.SDMISO(1'b1),
+	.SDCLK(),
+	.SDMOSI(),
+	.SDSS(),
+
+	.caps_led(),
+	.motor_led(cas_relay),
+
+	.cassette_in(casdout),
+	.cassette_out(),
+
+	.vid_mode({1'b0, vid_progressive}),
+
+	.test(),
+	.avr_RxD(1'b1),
+	.avr_TxD(),
+	.cpu_addr(cpu_addr),
+
+	.joystick1_x(acorn_ajoy1[7:0]),
+	.joystick1_y(acorn_ajoy1[15:8]),
+	.joystick1_fire(acorn_joy1[4]),
+	.joystick2_x(acorn_ajoy2[7:0]),
+	.joystick2_y(acorn_ajoy2[15:8]),
+	.joystick2_fire(acorn_joy2[4]),
+
+	.h_cnt(h_cnt),
+	.v_cnt(v_cnt)
+);
+
+assign VGA_R = {r, r};
+assign VGA_G = {g, g};
+assign VGA_B = {b, b};
+assign VGA_HS = hs;
+assign VGA_VS = vs;
+assign VGA_HB = hblank;
+assign VGA_VB = vblank;
+assign CE_PIXEL = 1'b1;
+
+// ------------------------------------------------------------------- audio
+// Same as AcornElectron.sv (unbalanced on purpose until the audio fix lands).
+
+wire [11:0] sound = {12{audio_snl}};
+wire [15:0] sound_pad = {1'b0, sound[11:8], sound[7] ^ (tape_monitor ? casdout : 1'b0), sound[6:0], 3'b0};
+assign AUDIO_L = sound_pad;
+assign AUDIO_R = {16{audio_snr}};
+
+// -------------------------------------------------------------------- tape
+// AcornElectron.sv buffers the tape in SDRAM; a 2 MB array stands in here.
+
+wire        load_tape = ioctl_index[5:0] == 2;
+wire [24:0] sdram_addr;
+wire        sdram_rd;
+reg   [7:0] sdram_data;
+reg  [24:0] tape_end;
+reg   [7:0] tape_mem[0:2097151];
+
+always @(posedge clk_sys) begin
+	if (ioctl_download && ioctl_wr && load_tape) tape_mem[ioctl_addr[20:0]] <= ioctl_dout;
+	sdram_data <= tape_mem[sdram_addr[20:0]];
+end
+
+// As AcornElectron.sv: hps_io leaves ioctl_addr = file size after a download
+always @(posedge clk_sys) if (load_tape) tape_end <= ioctl_addr - 1'd1;
+
+cassette cassette
+(
+	.clk(clk_sys),
+	.rewind(tape_rewind | (load_tape & ioctl_download)),
+	.en(cas_relay),
+	.sdram_addr(sdram_addr),
+	.sdram_data(sdram_data),
+	.sdram_rd(sdram_rd),
+	.tape_end(tape_end),
+	.data(casdout),
+	.status()
+);
+
+// ------------------------------------------------------------------- debug
+
+assign dbg_cpu_addr  = cpu_addr;
+assign dbg_mem_addr  = mem_addr;
+assign dbg_mem_we_n  = mem_we_n;
+assign dbg_mem_din   = mem_din;
+assign dbg_cas_relay = cas_relay;
+assign dbg_casdout   = casdout;
+assign dbg_tape_addr = sdram_addr;
+assign dbg_tape_end  = tape_end;
+
+endmodule
+
+// altsyncram SINGLE_PORT with unregistered output: address is registered,
+// q follows one clock later.
+module sim_spram #(parameter DATAWIDTH=8, ADDRWIDTH=8, NUMWORDS=1<<ADDRWIDTH, MEM_INIT_FILE="")
+(
+	input                  clock,
+	input  [ADDRWIDTH-1:0] address,
+	input  [DATAWIDTH-1:0] data,
+	input                  wren,
+	output [DATAWIDTH-1:0] q
+);
+
+reg [DATAWIDTH-1:0] mem[0:NUMWORDS-1] /* verilator public */;
+reg [ADDRWIDTH-1:0] addr_r;
+
+initial if (MEM_INIT_FILE != "") $readmemh(MEM_INIT_FILE, mem);
+
+always @(posedge clock) begin
+	if (wren) mem[address] <= data;
+	addr_r <= address;
+end
+
+assign q = mem[addr_r];
+
+endmodule

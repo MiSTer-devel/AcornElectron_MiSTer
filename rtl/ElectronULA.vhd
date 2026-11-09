@@ -1287,7 +1287,7 @@ begin
 
         mc6522_enable  <= '1' when addr(15 downto 4) = x"fcb" else '0';
 
-			via : work.via6522 port map (
+			via : entity work.via6522 port map (
 				clock       => clk_16M00,
 				rising      => via2_clken and     via1_clken,
 				falling     => via2_clken and not via1_clken,
