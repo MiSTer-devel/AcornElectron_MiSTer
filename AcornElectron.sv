@@ -338,7 +338,7 @@ wire [9:0] center_joystick_x2   =  8'd128 + joya2[7:0];
 wire [31:0] acorn_joy1 = status[10] ? joy2 : joy1;
 wire [31:0] acorn_joy2 = status[10] ? joy1 : joy2;
 
-wire [15:0] acorn_ajoy1 = status[10] ? { (8'hFF - center_joystick_y2[7:0]),(8'hFF - center_joystick_y2[7:0])} : {(8'hFF - center_joystick_y1[7:0]),(8'hFF - center_joystick_x1[7:0])};
+wire [15:0] acorn_ajoy1 = status[10] ? {(8'hFF - center_joystick_y2[7:0]),(8'hFF - center_joystick_x2[7:0])} : {(8'hFF - center_joystick_y1[7:0]),(8'hFF - center_joystick_x1[7:0])};
 wire [15:0] acorn_ajoy2 = status[10] ? {(8'hFF - center_joystick_y1[7:0]),(8'hFF - center_joystick_x1[7:0])} : {(8'hFF - center_joystick_y2[7:0]),(8'hFF - center_joystick_x2[7:0])};
 
 
