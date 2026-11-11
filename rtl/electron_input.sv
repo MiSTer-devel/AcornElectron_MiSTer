@@ -59,8 +59,11 @@ endmodule
 // OSD BREAK / Ctrl-BREAK / SHIFT-BREAK (trigger buttons) and Autoboot.
 // BREAK is held for the first 50 ms; CTRL or SHIFT is held for 300 ms, so the
 // MOS still sees it after BREAK is released (CTRL: cold start, SHIFT: run
-// the disk's !BOOT). Autoboot presses SHIFT-BREAK 300 ms after a power-on
+// the disk's !BOOT). Autoboot presses SHIFT-BREAK 1.5 s after a power-on
 // reset (MMFS only boots on SHIFT-BREAK, not on SHIFT held at power-on).
+// Not sooner: the MOS's cold start takes about 0.8 s, and a BREAK in the
+// middle of it leaves the keyboard workspace half set up (with the Plus 3's
+// ADFS or the JAFA Mode 7 ROM the machine then typed its FUNC keywords).
 // Times assume a 16 MHz clk.
 module electron_osd_buttons
 (
@@ -77,9 +80,9 @@ module electron_osd_buttons
 
 reg  [2:0] old_t;
 reg [22:0] cnt = 0;
-reg [22:0] boot_wait = 0;
+reg [24:0] boot_wait = 0;
 
-wire auto_shift_break = (boot_wait == 23'd1);
+wire auto_shift_break = (boot_wait == 25'd1);
 
 always @(posedge clk) begin
 	old_t <= {btn_shift_break, btn_ctrl_break, btn_break};
@@ -93,7 +96,7 @@ always @(posedge clk) begin
 	                                 begin cnt <= 23'd4800000; osd_ctrl <= 0; osd_shift <= 1; end
 	if (reset) begin
 		cnt <= 0; osd_ctrl <= 0; osd_shift <= 0;
-		boot_wait <= autoboot ? 23'd4800000 : 23'd0;   // 300 ms after the reset ends
+		boot_wait <= autoboot ? 25'd24000000 : 25'd0;  // 1.5 s after the reset ends
 	end
 end
 

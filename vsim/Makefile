@@ -59,6 +59,9 @@ V_DEFINE = +define+SIMULATION=1 +1364-2005ext+v +1800-2017ext+sv \
 	-Wno-fatal -Wno-WIDTH -Wno-TIMESCALEMOD -Wno-PINMISSING -Wno-CASEINCOMPLETE \
 	-Wno-UNOPTFLAT -Wno-MULTIDRIVEN -Wno-PROCASSWIRE
 
+# make EXTRA=+define+WD_DEBUG  (extra Verilator defines; touch sim.v to rebuild)
+V_DEFINE += $(EXTRA)
+
 ifeq ($(TRACE),1)
 V_DEFINE += --trace
 CXX_DEFINE += -DVM_TRACE_VCD=1
@@ -88,6 +91,9 @@ V_SRC = \
 	$(CORE_V) \
 	$(RTL)/electron_input.sv \
 	$(RTL)/electron_mem.sv \
+	$(RTL)/dpram.sv \
+	$(RTL)/wd1770.sv \
+	$(RTL)/plus3.sv \
 	$(RTL)/inflate.sv \
 	$(RTL)/uef_player.sv \
 	$(RTL)/tape.sv \

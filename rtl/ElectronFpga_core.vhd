@@ -92,6 +92,13 @@ entity ElectronFpga_core is
         avr_TxD        : out   std_logic;
 
         cpu_addr       : out   std_logic_vector(15 downto 0);
+        -- MiSTer: expansion bus for devices outside the core (rtl/plus3.sv):
+        -- the CPU's address is cpu_addr; exp_en = 1 puts exp_din on the bus
+        exp_cpu_dout   : out   std_logic_vector(7 downto 0);
+        exp_cpu_rnw    : out   std_logic;
+        exp_cpu_clken  : out   std_logic;   -- one clock at the end of each CPU cycle
+        exp_din        : in    std_logic_vector(7 downto 0) := x"FF";
+        exp_en         : in    std_logic := '0';
         -- sim debug: DO, R_W_n, Sync, Enable, DI (unused in the MiSTer top)
         cpu_dbg        : out   std_logic_vector(18 downto 0);
 		  
@@ -285,7 +292,8 @@ begin
                   -- Sideways RAM Access
                   (cpu_a(15 downto 14) = "10" and rom_latch(3 downto 1) /= "100") else '0';
 
-    cpu_din <= ext_Dout       when ext_enable = '1' else
+    cpu_din <= exp_din        when exp_en = '1' else
+               ext_Dout       when ext_enable = '1' else
                ula_data       when ula_enable = '1' else
                x"F1";
 
@@ -414,6 +422,9 @@ begin
 
 
    cpu_addr <= cpu_a(15 downto 0);
+   exp_cpu_dout  <= cpu_dout;
+   exp_cpu_rnw   <= cpu_R_W_n;
+   exp_cpu_clken <= cpu_clken;
    cpu_dbg  <= cpu_dout & cpu_R_W_n & cpu_sync & cpu_clken & cpu_din;
 
    test <= (others => '0');

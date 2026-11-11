@@ -16,6 +16,9 @@ set_global_assignment -name QIP_FILE rtl/xtra_pll.qip
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/electron_input.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/electron_mem.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/dpram.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/wd1770.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/plus3.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/inflate.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/uef_player.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/tape.sv

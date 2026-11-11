@@ -135,51 +135,68 @@ static void cpu_trace_sample() {
 // up as from one PLL. A tick() is half a clk_sys period (3 sub-steps).
 static uint64_t substep = 0;
 
-// --sd <image>: an SD card for MMFS (sys/sd_card.sv in sim.v), answering
-// hps_io's block protocol (512-byte blocks) at clk_sys. Writes stay in
-// memory; the image file is never changed.
-static std::vector<uint8_t> sd_img;
-static bool sd_present = false, sd_mounted = false, sd_write = false;
-static int sd_state = 0, sd_pos = 0;
+// Image slots answering hps_io's block protocol (512-byte blocks) at clk_sys:
+// 0 = the MMC card for MMFS (--sd, sys/sd_card.sv in sim.v), 1/2 = the
+// Plus 3's floppy drives (--floppy0 / --floppy1, rtl/plus3.sv). Writes stay
+// in memory; the image files are never changed.
+struct SimImg { std::vector<uint8_t> data; bool present = false, mounted = false; };
+static SimImg sd_imgs[3];
+static bool sd_write = false;
+static int sd_state = 0, sd_pos = 0, sd_drv = 0;
 static uint32_t sd_blk = 0;
 static bool opt_sd_log = false;
+static bool load_image(int slot, const std::string &fn) {
+	FILE *f = fopen(fn.c_str(), "rb");
+	if (!f) { fprintf(stderr, "cannot open image %s\n", fn.c_str()); return false; }
+	fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+	sd_imgs[slot].data.resize(n);
+	bool ok = fread(sd_imgs[slot].data.data(), 1, n, f) == (size_t)n;
+	fclose(f);
+	sd_imgs[slot].present = ok;
+	return ok;
+}
+static uint32_t sd_lba_of(int d) { return d == 0 ? top->sd_lba0 : d == 1 ? top->sd_lba1 : top->sd_lba2; }
+static uint8_t sd_din_of(int d) { return d == 0 ? top->sd_buff_din0 : d == 1 ? top->sd_buff_din1 : top->sd_buff_din2; }
 static void sd_card_step() {
-	if (opt_sd_log) {
+	if (opt_sd_log) {   // the MMC card's SPI lines: toggle counts and decoded bytes
 		static unsigned last = 0, tog[5]; unsigned d = top->dbg_sd;
 		for (int b = 0; b < 5; b++) if (((d ^ last) >> b) & 1) tog[b]++;
-		// decode SPI mode 0: sample MOSI/MISO on SCK rising
 		static int nb = 0, nbytes = 0; static unsigned bo = 0, bi = 0;
 		if ((d & 4) && !(last & 4) && nbytes < 400) {
 			bo = (bo << 1) | ((d >> 1) & 1); bi = (bi << 1) | (d & 1);
 			if (++nb == 8) { printf("SPI %02X/%02X%s", bo & 0xFF, bi & 0xFF, (++nbytes % 12) ? " " : "\n"); nb = 0; bo = bi = 0; }
 		}
 		last = d;
-		if ((main_time % 1600000) == 0) printf("SDDBG t=%llu sel %u ss %u (tog %u) sck tog %u mosi tog %u miso tog %u\n",
-			(unsigned long long)main_time, (d >> 4) & 1, (d >> 3) & 1, tog[3], tog[2], tog[1], tog[0]);
 	}
 	top->img_mounted = 0;
 	top->sd_buff_wr = 0;
-	if (!sd_present) return;
-	if (!sd_mounted) {
-		if (main_time > 100) { top->img_mounted = 1; top->img_size = sd_img.size(); sd_mounted = true; }
-		return;
-	}
+	if (main_time < 100) return;
+	for (int i = 0; i < 3; i++)                       // mount one slot per clock
+		if (sd_imgs[i].present && !sd_imgs[i].mounted) {
+			top->img_mounted = 1 << i; top->img_size = sd_imgs[i].data.size(); top->img_readonly = 0;
+			sd_imgs[i].mounted = true;
+			return;
+		}
 	switch (sd_state) {
 	case 0:
-		if (top->sd_rd || top->sd_wr) {
-			sd_write = top->sd_wr; sd_blk = top->sd_lba; sd_pos = 0; sd_state = 1; top->sd_ack = 1;
-			if (opt_sd_log) printf("SD %s block %u (frame %d)\n", sd_write ? "write" : "read", sd_blk, video.count_frame);
-		}
+		for (int i = 0; i < 3; i++)
+			if (((top->sd_rd | top->sd_wr) >> i) & 1) {
+				sd_drv = i; sd_write = (top->sd_wr >> i) & 1; sd_blk = sd_lba_of(i);
+				sd_pos = 0; sd_state = 1; top->sd_ack = 1 << i;
+				if (opt_sd_log) printf("SD%d %s block %u (frame %d)\n", i, sd_write ? "write" : "read", sd_blk, video.count_frame);
+				break;
+			}
 		break;
 	case 1: {
+		std::vector<uint8_t> &img = sd_imgs[sd_drv].data;
 		size_t off = (size_t)sd_blk * 512 + sd_pos;
 		top->sd_buff_addr = sd_pos;
 		if (!sd_write) {
-			top->sd_buff_dout = off < sd_img.size() ? sd_img[off] : 0;
+			top->sd_buff_dout = off < img.size() ? img[off] : 0;
 			top->sd_buff_wr = 1;
 		} else if (sd_pos > 0) {   // din follows addr one clock later (registered block RAM)
 			size_t o = (size_t)sd_blk * 512 + sd_pos - 1;
-			if (o < sd_img.size()) sd_img[o] = top->sd_buff_din;
+			if (o < img.size()) img[o] = sd_din_of(sd_drv);
 		}
 		if (++sd_pos == (sd_write ? 513 : 512)) sd_state = 2;
 		break;
@@ -481,6 +498,7 @@ static void usage() {
 	printf("  --rom <file>                  Load a 112 KB ROM image (ELK.mif layout) at power-on\n");
 	printf("  --cart1 / --cart2 <file>      OSD Cartridge 1 (ROMs 2/3) / 2 (ROMs 0/1) at power-on\n");
 	printf("  --sd <image> [--sd-log]       SD card image for MMFS (MMB / boot.vhd); writes stay in memory\n");
+	printf("  --plus3, --floppy0/1 <adf>    OSD Plus 3 On; ADFS floppy images in drives 0/1\n");
 	printf("  --tape <file>                 Load a tape (OSD F2) at --tape-frame (default 0)\n");
 	printf("  --tape-frame <n>\n");
 	printf("  --tape-rewind <n>             OSD Stop & Rewind at field n. Repeatable\n");
@@ -551,13 +569,10 @@ static int parse_args(int argc, char **argv) {
 		else if (a == "--video-stats") opt_video_stats = true;
 		else if (a == "--vcheck") opt_vcheck = true;
 		else if (a == "--sd-log") opt_sd_log = true;
-		else if (a == "--sd") {
-			FILE *f = fopen(next().c_str(), "rb");
-			if (!f) { fprintf(stderr, "--sd: cannot open image\n"); return 2; }
-			fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
-			sd_img.resize(n); if (fread(sd_img.data(), 1, n, f) != (size_t)n) { fprintf(stderr, "--sd: short read\n"); return 2; }
-			fclose(f); sd_present = true;
-		}
+		else if (a == "--sd") { if (!load_image(0, next())) return 2; }
+		else if (a == "--floppy0") { if (!load_image(1, next())) return 2; }
+		else if (a == "--floppy1") { if (!load_image(2, next())) return 2; }
+		else if (a == "--plus3") top->osd_plus3 = 1;
 		else if (a == "--cart1") opt_cart[0] = next();
 		else if (a == "--cart2") opt_cart[1] = next();
 		else if (a == "--tape") opt_tape = next();

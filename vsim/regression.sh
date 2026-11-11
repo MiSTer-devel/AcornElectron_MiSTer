@@ -125,6 +125,20 @@ if [ -f $SW/mister11/tapes/Boxer_E.zip ] && [ -f $SW/free/0xC0DE6502/machine-aut
 		--screenshot-prefix tape_flappy --stop-at-frame 1000 > "$OUT/tape_flappy.log" 2>&1 &
 fi
 
+# --- 6a. Plus 3 (local software/ only): PRES ADFS 1.15 added as ROM 13
+# (roms/add_rom.py on a copy; it is not in the repo), Plus 3 On, the Acorn
+# Welcome disc (ADFS M .adf) in drive 0: *CAT lists !BOOT Help Library Welcome.
+P3ROM="$SW/commercial/tosec_archive.org_extracted/acorn-electron-games-uef/Acorn Electron - Expansion Carts/Advanced Plus 3 (1988)(P.R.E.S.)/Advanced Plus 3 (1988)(P.R.E.S.).rom"
+P3DISC="$SW/commercial/stairwaytohell_extracted/adfs/WelcomeDisc-ADFS_E/WelcomeDisc-ADFS_E.adf"
+PLUS3=0
+if [ -f "$P3ROM" ] && [ -f "$P3DISC" ]; then
+	PLUS3=1
+	python3 -I ../roms/add_rom.py ../roms/rom_image.bin "$P3ROM" 4 "$OUT/elk_plus3.bin" > /dev/null
+	$SIM --headless --plus3 --rom "$OUT/elk_plus3.bin" --floppy0 "$P3DISC" --key-hold 2 --key-gap 2 \
+		--send-keys '120:*CAT\n' --screenshot 300 --screenshot-dir "$OUT" --screenshot-prefix plus3_cat \
+		--stop-at-frame 300 > "$OUT/plus3_cat.log" 2>&1 &
+fi
+
 # --- 6. OSD CPU speed: a 2000-step FOR loop, centiseconds into &78 --------
 for c in 0 1 2; do
 	$SIM --headless --key-hold 2 --key-gap 2 --cpu-speed $c \
@@ -168,7 +182,7 @@ shot_check() {   # log golden label
 	[ "$h" = "$2" ] && pass "$3 ($h)" || fail "$3: got '$h' want $2 ($OUT/$1_*.png)"
 }
 shot_check shift_break 8e7a54ac4af27b7b "SHIFT-BREAK boots (Card?)"
-shot_check autoboot    c3f63c738653f105 "Autoboot boots (Card?)"
+shot_check autoboot    8e7a54ac4af27b7b "Autoboot boots (Card?; same screen as SHIFT-BREAK)"
 peek_check fkey "2A" "F1 = FUNC+1"
 shot_check mode7 03954d3e8c3e5d93 "Mode 7: teletext colours and double height"
 peek_check cart "42 00 00 42" "cartridges: ROM 0 = Cartridge 2, ROM 3 = Cartridge 1 upper 16 KB"
@@ -182,6 +196,11 @@ if [ $TAPES = 1 ]; then
 	shot_check tape_flappy 34cf42aaefe431af "tape: Flappy Bird (*LOAD from BASIC, ROM 12 kept paged) to attract screen"
 else
 	echo "SKIP  tapes (no ../software)"
+fi
+if [ $PLUS3 = 1 ]; then
+	shot_check plus3_cat ff8e301a84cdd0fb "Plus 3: ADFS *CAT of the Welcome disc"
+else
+	echo "SKIP  Plus 3 (no ../software)"
 fi
 peek_check speed0 "90" "CPU speed Normal (cs)"
 peek_check speed1 "67" "CPU speed 2 MHz (cs)"

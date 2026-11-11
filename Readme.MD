@@ -54,6 +54,34 @@ vertical offset on a BBC) to the 6845's vsync position, but this MMFS uses
 black. Patched at &8A00 / &AA00: `ADC &0290` -> `ADC #0` (as `*TV 0`).
 
 
+## Plus 3 (ADFS floppy drives)
+
+Machine page: **Plus 3 (ADFS floppy)** On, then Apply and reset. Two rows
+appear on the top page, Floppy 0 and Floppy 1 (Plus 3), for ADFS disc images:
+`.adf` (ADFS S 160 KB / M 320 KB, one side) and `.adl` (ADFS L 640 KB, two
+sides). Writes go back to the image. ADFS becomes the filing system:
+SHIFT-BREAK (or Autoboot) boots drive 0, `*MOUNT` / `*CAT` / `*DIR` as usual;
+`*CARD` (or Plus 3 Off) brings MMFS back. The Plus 3's control register
+shares &FCC0 with the First Byte joystick, so First Byte reads there are off
+while the Plus 3 is on.
+
+The ADFS ROM is not included. It goes in ROM 13 (slot 4 of the ROM image)
+and only answers while the Plus 3 is on. Either build it in:
+
+```
+python3 roms/add_rom.py roms/ELK.mif <your ADFS rom> 4    # then compile
+```
+
+or, without rebuilding, make a 112 KB ROM image with it and use Load ROM
+(or put it in games/AcornElectron as boot.rom):
+
+```
+python3 roms/add_rom.py roms/rom_image.bin <your ADFS rom> 4 boot.rom
+```
+
+Tested with PRES ADFS 1.15 ("Advanced Plus 3").
+
+
 ## Cartridges
 
 The OSD rows Cartridge 1 and Cartridge 2 are the Plus 1's two cartridge

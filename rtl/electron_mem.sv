@@ -8,7 +8,9 @@
 //
 //  ROM image (112 KB, roms/ELK.mif, replaced by OSD Load ROM, index 0):
 //    0 MMFS (slot 4), 1 MOS (slots 8-9: the core maps C000-FFFF there),
-//    2 BASIC (10-11), 3 PRES AP2 (12), 4-5 blank (13-14), 6 Mode 7 (15).
+//    2 BASIC (10-11), 3 PRES AP2 (12), 4 Plus 3 ADFS (13, only with the
+//    Plus 3 on; blank in the committed image: roms/add_rom.py adds it to a
+//    build), 5 blank (14), 6 Mode 7 (15).
 //
 //  RAM (128 KB):
 //    0-3  ROMs 0-3: the Plus 1's cartridge sockets (as MAME's plus1.cpp:
@@ -32,6 +34,7 @@ module electron_mem
 	output      [7:0] mem_dout,        // to ext_Dout
 
 	// OSD downloads
+	input             plus3,           // Plus 3 fitted: ROM 13 (ADFS) answers
 	input             rom_download,    // index 0: the 112 KB ROM image
 	input       [1:0] cart_download,   // index 3: Cartridge 1, index 4: Cartridge 2
 	input             ioctl_wr,
@@ -63,7 +66,7 @@ always @(*) begin
 		5'b0_10_10,
 		5'b0_10_11: rom_slot = 2;   // BASIC
 		5'b0_11_00: rom_slot = 3;   // PRES AP2
-		5'b0_11_01: rom_slot = 4;
+		5'b0_11_01: begin rom_slot = 4; rom_hit = plus3; end   // Plus 3 ADFS
 		5'b0_11_10: rom_slot = 5;
 		5'b0_11_11: rom_slot = 6;   // Mode 7
 		default:    begin rom_slot = 0; rom_hit = 0; end

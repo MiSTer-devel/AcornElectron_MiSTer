@@ -62,17 +62,24 @@ module emu (
 	output            VGA_VB,
 	output            CE_PIXEL,
 
-	// SD card image (hps_io block protocol, driven by sim_main.cpp --sd)
-	input             img_mounted,
+	// image slots (hps_io block protocol, driven by sim_main.cpp): 0 the MMC
+	// card (--sd), 1/2 the Plus 3's floppy drives (--floppy0 / --floppy1)
+	input       [2:0] img_mounted,
 	input      [63:0] img_size,
-	output     [31:0] sd_lba,
-	output            sd_rd,
-	output            sd_wr,
-	input             sd_ack,
+	input             img_readonly,
+	output     [31:0] sd_lba0,
+	output     [31:0] sd_lba1,
+	output     [31:0] sd_lba2,
+	output      [2:0] sd_rd,
+	output      [2:0] sd_wr,
+	input       [2:0] sd_ack,
 	input       [8:0] sd_buff_addr,
 	input       [7:0] sd_buff_dout,
-	output      [7:0] sd_buff_din,
+	output      [7:0] sd_buff_din0,
+	output      [7:0] sd_buff_din1,
+	output      [7:0] sd_buff_din2,
 	input             sd_buff_wr,
+	input             osd_plus3,        // OSD Plus 3 (status[27], latched at reset)
 
 	// sys video_mixer + video_calc, as on MiSTer: what Main reads (--vcheck)
 	input       [4:0] vc_par,
@@ -103,7 +110,8 @@ wire reset = reset_in | rom_download | (|cart_download);
 
 reg       cfg_interlace;
 reg [1:0] cfg_speed;
-always @(posedge clk_sys) if (reset) begin cfg_interlace <= vid_interlaced; cfg_speed <= osd_cpu_speed; end
+reg cfg_plus3 = 0;
+always @(posedge clk_sys) if (reset) begin cfg_interlace <= vid_interlaced; cfg_speed <= osd_cpu_speed; cfg_plus3 <= osd_plus3; end
 wire [1:0] cpu_speed = (cfg_speed == 2'd0) ? 2'b01 : (cfg_speed == 2'd1) ? 2'b10 : 2'b11;
 
 wire osd_break, osd_ctrl, osd_shift;
@@ -134,7 +142,7 @@ electron_mem electron_mem
 (
 	.clk(clk_sys),
 	.mem_addr(mem_addr), .mem_we_n(mem_we_n), .mem_din(mem_din), .mem_dout(mem_dout),
-	.rom_download(rom_download), .cart_download(cart_download),
+	.plus3(cfg_plus3), .rom_download(rom_download), .cart_download(cart_download),
 	.ioctl_wr(ioctl_wr), .ioctl_addr(ioctl_addr), .ioctl_dout(ioctl_dout),
 	.rom_a(rom_a), .rom_we(rom_we), .rom_d(rom_d), .rom_q(rom_q),
 	.ram_a(ram_a), .ram_we(ram_we), .ram_d(ram_d), .ram_q(ram_q)
@@ -241,6 +249,11 @@ ElectronFpga_core Electron
 	.avr_TxD(),
 	.cpu_addr(cpu_addr),
 	.cpu_dbg(dbg_cpu),
+	.exp_cpu_dout(exp_cpu_dout),
+	.exp_cpu_rnw(exp_cpu_rnw),
+	.exp_cpu_clken(exp_cpu_clken),
+	.exp_din(plus3_dout),
+	.exp_en(plus3_sel),
 
 	.joystick1_x(adc1_x),
 	.joystick1_y(adc1_y),
@@ -407,17 +420,39 @@ tape #(.CLK_HZ(16000000)) tape
 // As AcornElectron.sv: MMFS's SPI card is sys/sd_card.sv on the image.
 wire sdclk, sdmosi, sdss, vsdmiso;
 reg  vsd_sel = 0;
-always @(posedge clk_sys) if (img_mounted) vsd_sel <= |img_size;
+always @(posedge clk_sys) if (img_mounted[0]) vsd_sel <= |img_size;
 wire sdmiso = vsd_sel ? vsdmiso : 1'b1;
 assign dbg_sd = {vsd_sel, sdss, sdclk, sdmosi, sdmiso};
 
 sd_card sd_card
 (
 	.clk_sys(clk_sys), .reset(reset),
-	.sdhc(1'b1), .img_mounted(img_mounted), .img_size(img_size),
-	.sd_lba(sd_lba), .sd_rd(sd_rd), .sd_wr(sd_wr), .sd_ack(sd_ack),
-	.sd_buff_addr(sd_buff_addr), .sd_buff_dout(sd_buff_dout), .sd_buff_din(sd_buff_din), .sd_buff_wr(sd_buff_wr),
+	.sdhc(1'b1), .img_mounted(img_mounted[0]), .img_size(img_size),
+	.sd_lba(sd_lba0), .sd_rd(sd_rd[0]), .sd_wr(sd_wr[0]), .sd_ack(sd_ack[0]),
+	.sd_buff_addr(sd_buff_addr), .sd_buff_dout(sd_buff_dout), .sd_buff_din(sd_buff_din0), .sd_buff_wr(sd_buff_wr),
 	.clk_spi(clk_sys), .ss(sdss | ~vsd_sel), .sck(sdclk), .mosi(sdmosi), .miso(vsdmiso)
+);
+
+// ----------------------------------------------------------------- Plus 3
+// As AcornElectron.sv (rtl/plus3.sv on the core's expansion port).
+wire  [7:0] exp_cpu_dout, plus3_dout;
+wire        exp_cpu_rnw, exp_cpu_clken, plus3_sel;
+wire [31:0] p3_lba[2];
+wire  [7:0] p3_buff_din[2];
+assign sd_lba1 = p3_lba[0];
+assign sd_lba2 = p3_lba[1];
+assign sd_buff_din1 = p3_buff_din[0];
+assign sd_buff_din2 = p3_buff_din[1];
+
+plus3 #(.CLK_HZ(16000000)) plus3
+(
+	.clk(clk_sys), .reset(reset), .enable(cfg_plus3),
+	.addr(cpu_addr), .din(exp_cpu_dout), .rnw(exp_cpu_rnw), .clken(exp_cpu_clken),
+	.dout(plus3_dout), .sel(plus3_sel),
+	.img_mounted(img_mounted[2:1]), .img_readonly(img_readonly), .img_size(img_size),
+	.sd_lba(p3_lba), .sd_rd(sd_rd[2:1]), .sd_wr(sd_wr[2:1]), .sd_ack(sd_ack[2:1]),
+	.sd_buff_addr(sd_buff_addr), .sd_buff_dout(sd_buff_dout), .sd_buff_din(p3_buff_din), .sd_buff_wr(sd_buff_wr),
+	.busy(), .ctrl()
 );
 
 // ------------------------------------------------------------------- debug

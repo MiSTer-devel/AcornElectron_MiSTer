@@ -48,12 +48,15 @@ wire [1:0] ar = status[9:8];
 // Status bits kept from the old menu: 3-5 Scandoubler Fx, 8-9 Aspect ratio,
 // 10 Swap joysticks, 12 Tape input, 13 Tape audio, 14 Tape overlay (1 = Off),
 // 15 Rewind tape. New: 16-17 CPU speed, 18 Interlace, 19-20 Scale,
-// 22 BREAK, 23 Ctrl-BREAK, 24 Autoboot (1 = Off), 25 SHIFT-BREAK, 26 Tape speed (1 = Normal).
+// 22 BREAK, 23 Ctrl-BREAK, 24 Autoboot (1 = Off), 25 SHIFT-BREAK, 26 Tape speed (1 = Normal),
+// 27 Plus 3.
 `include "build_id.v" 
 parameter CONF_STR = {
 	"AcornElectron;;",
 	"-;",
 	"SC0,VHD,Pri. disk (MMB);",
+	"H2S1,ADFADL,Floppy 0 (Plus 3);",
+	"H2S2,ADFADL,Floppy 1 (Plus 3);",
 	"H1F2,UEFCAS,Tape;",
 	"h1-;",
 	"F3,ROMBIN,Cartridge 1;",
@@ -70,6 +73,7 @@ parameter CONF_STR = {
 	"R0,Apply and reset;",
 
 	"P1O[17:16],CPU speed,Normal,2 MHz,4 MHz;",
+	"P1O[27],Plus 3 (ADFS floppy),Off,On;",
 	"P1O[26],Tape speed,8x,Normal;",
 	"P1-;",
 	"P1T[15],Rewind tape;",
@@ -173,16 +177,17 @@ wire        direct_video;
 wire [21:0] gamma_bus;
 
 
-wire [31:0] sd_lba[1];
-wire        sd_rd;
-wire        sd_wr;
-wire        sd_ack;
+// image slots: 0 the MMC card (boot.vhd), 1/2 the Plus 3's floppy drives 0/1
+wire [31:0] sd_lba[3];
+wire  [2:0] sd_rd;
+wire  [2:0] sd_wr;
+wire  [2:0] sd_ack;
 wire  [8:0] sd_buff_addr;
 wire  [7:0] sd_buff_dout;
-wire  [7:0] sd_buff_din[1];
+wire  [7:0] sd_buff_din[3];
 wire        sd_buff_wr;
 
-wire        img_mounted;
+wire  [2:0] img_mounted;
 wire        img_readonly;
 wire [63:0] img_size;
 
@@ -199,7 +204,7 @@ localparam [4:0] TAPE_TURBO = 5'd8;
 wire  [4:0] tape_speed = tape_turbo ? TAPE_TURBO : 5'd1;
 
 assign LED_USER  = cas_relay | ioctl_download | tape_unpacking | (vsd_sel & sd_act);
-assign LED_DISK  = {1'b1,~vsd_sel & sd_act};
+assign LED_DISK  = {1'b1,(~vsd_sel & sd_act) | plus3_busy};
 
 /////////////////  RESET  /////////////////////////
 
@@ -216,7 +221,8 @@ wire reset = RESET | status[0] | buttons[1] | rom_download | (|cart_download);
 // and read status directly.
 reg [31:0] cfg;
 always @(posedge clk_sys) if (reset) cfg <= status;
-wire pending = status[18:16] != cfg[18:16];
+wire pending = (status[18:16] != cfg[18:16]) || (status[27] != cfg[27]);
+wire plus3_on = cfg[27];   // Plus 3 fitted (P1 Machine, applies at reset)
 
 wire [1:0] cpu_speed = (cfg[17:16] == 2'd0) ? 2'b01 :   // Normal: 2 MHz ROM, 1 MHz contended RAM
                        (cfg[17:16] == 2'd1) ? 2'b10 :   // 2 MHz, no contention
@@ -236,7 +242,7 @@ electron_osd_buttons osd_buttons
 	.osd_shift(osd_shift)
 );
 
-hps_io #(.CONF_STR(CONF_STR)) hps_io
+hps_io #(.CONF_STR(CONF_STR), .VDNUM(3)) hps_io
 (
 	.clk_sys(clk_sys),
 	.HPS_BUS(HPS_BUS),
@@ -247,7 +253,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.gamma_bus(gamma_bus),
 	.direct_video(direct_video),
 
-	.status_menumask({status[12], pending}),  // bit 1: tape input ADC hides the Tape row
+	.status_menumask({~status[27], status[12], pending}),  // bit 1: tape input ADC hides the Tape row; bit 2: Plus 3 Off hides the floppies
 
 	.ps2_key(ps2_key),
 
@@ -296,7 +302,7 @@ electron_mem electron_mem
 (
 	.clk(clk_sys),
 	.mem_addr(mem_addr), .mem_we_n(mem_we_n), .mem_din(mem_din), .mem_dout(mem_dout),
-	.rom_download(rom_download), .cart_download(cart_download),
+	.plus3(plus3_on), .rom_download(rom_download), .cart_download(cart_download),
 	.ioctl_wr(ioctl_wr), .ioctl_addr(ioctl_addr), .ioctl_dout(ioctl_dout),
 	.rom_a(rom_a), .rom_we(rom_we), .rom_d(rom_d), .rom_q(rom_q),
 	.ram_a(ram_a), .ram_we(ram_we), .ram_d(ram_d), .ram_q(ram_q)
@@ -340,6 +346,44 @@ electron_joy electron_joy
 wire show_cas_overlay = ~status[14];
 
 // analog -127..+127, Y: [15:8], X: [7:0]
+
+// Plus 3: WD1770 floppy interface at &FCC0-&FCC7 (rtl/plus3.sv), drives on
+// image slots 1 and 2; its ADFS ROM is ROM 13 (electron_mem).
+wire  [7:0] exp_cpu_dout, plus3_dout;
+wire        exp_cpu_rnw, exp_cpu_clken, plus3_sel, plus3_busy;
+wire [15:0] cpu_addr;
+wire [31:0] p3_lba[2];
+wire  [7:0] p3_buff_din[2];
+assign sd_lba[1] = p3_lba[0];
+assign sd_lba[2] = p3_lba[1];
+assign sd_buff_din[1] = p3_buff_din[0];
+assign sd_buff_din[2] = p3_buff_din[1];
+
+plus3 #(.CLK_HZ(16000000)) plus3
+(
+	.clk(clk_sys),
+	.reset(reset),
+	.enable(plus3_on),
+	.addr(cpu_addr),
+	.din(exp_cpu_dout),
+	.rnw(exp_cpu_rnw),
+	.clken(exp_cpu_clken),
+	.dout(plus3_dout),
+	.sel(plus3_sel),
+	.img_mounted(img_mounted[2:1]),
+	.img_readonly(img_readonly),
+	.img_size(img_size),
+	.sd_lba(p3_lba),
+	.sd_rd(sd_rd[2:1]),
+	.sd_wr(sd_wr[2:1]),
+	.sd_ack(sd_ack[2:1]),
+	.sd_buff_addr(sd_buff_addr),
+	.sd_buff_dout(sd_buff_dout),
+	.sd_buff_din(p3_buff_din),
+	.sd_buff_wr(sd_buff_wr),
+	.busy(plus3_busy),
+	.ctrl()
+);
 
 ElectronFpga_core Electron
 (
@@ -401,8 +445,14 @@ ElectronFpga_core Electron
 	.joystick2_y(adc2_y),
 	.joystick2_fire(fire2),
 	.fb_joy(fb_joy),
-	
-	
+
+	.cpu_addr(cpu_addr),
+	.exp_cpu_dout(exp_cpu_dout),
+	.exp_cpu_rnw(exp_cpu_rnw),
+	.exp_cpu_clken(exp_cpu_clken),
+	.exp_din(plus3_dout),
+	.exp_en(plus3_sel),
+
 	.h_cnt(h_cnt),
 	.v_cnt(v_cnt)
 /*
@@ -500,13 +550,17 @@ wire sdmiso = vsd_sel ? vsdmiso : SD_MISO;
 wire sdss;
 
 reg vsd_sel = 0;
-always @(posedge clk_sys) if(img_mounted) vsd_sel <= |img_size;
+always @(posedge clk_sys) if(img_mounted[0]) vsd_sel <= |img_size;
 
 wire vsdmiso;
 sd_card sd_card
 (
 	.sd_lba(sd_lba[0]),
 	.sd_buff_din(sd_buff_din[0]),
+	.img_mounted(img_mounted[0]),
+	.sd_rd(sd_rd[0]),
+	.sd_wr(sd_wr[0]),
+	.sd_ack(sd_ack[0]),
 	.*,
 
 	.clk_spi(clk_sys),
