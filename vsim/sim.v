@@ -20,7 +20,7 @@
 
 module emu (
 	input             clk_sys,          // 16 MHz, toggled by sim_main.cpp
-	input             reset,
+	input             reset_in,         // board / OSD Apply and reset
 
 	input      [10:0] ps2_key,          // [7:0] code, [8] ext, [9] pressed, [10] toggle
 	input      [31:0] joystick_0,       // hps_io joystick_0 (bit 4 = Fire)
@@ -28,11 +28,14 @@ module emu (
 	input      [15:0] joystick_l_analog_0, // signed Y [15:8], X [7:0]
 	input      [15:0] joystick_l_analog_1,
 	input             swap_joysticks,   // OSD status[10]
-	input             vid_interlaced,   // vid_mode 01 (interlaced) instead of 00
-	input             tape_rewind,      // OSD status[15] Stop & Rewind
+	input             vid_interlaced,   // OSD status[18] Interlace (latched at reset)
+	input       [1:0] osd_cpu_speed,    // OSD status[17:16] CPU speed (latched at reset)
+	input             btn_break,        // OSD status[22] BREAK
+	input             btn_ctrl_break,   // OSD status[23] Ctrl-BREAK
+	input             tape_rewind,      // OSD status[15] Rewind tape
 	input             tape_monitor,     // OSD status[13]
 
-	// HPS file transfer: index 0 = ROM (during reset), 2 = tape
+	// HPS file transfer: index 0 = ROM (resets the machine), 2 = tape
 	input             ioctl_download,
 	input             ioctl_wr,
 	input      [24:0] ioctl_addr,
@@ -64,6 +67,27 @@ module emu (
 );
 
 assign ioctl_wait = 1'b0;
+
+// ------------------------------------------------------------------- reset
+// As AcornElectron.sv: a ROM download is a power-on reset; settings latch at reset.
+wire rom_download = ioctl_download && ioctl_index == 0;
+wire reset = reset_in | rom_download;
+
+reg       cfg_interlace;
+reg [1:0] cfg_speed;
+always @(posedge clk_sys) if (reset) begin cfg_interlace <= vid_interlaced; cfg_speed <= osd_cpu_speed; end
+wire [1:0] cpu_speed = (cfg_speed == 2'd0) ? 2'b01 : (cfg_speed == 2'd1) ? 2'b10 : 2'b11;
+
+wire osd_break, osd_ctrl;
+electron_osd_buttons osd_buttons
+(
+	.clk(clk_sys),
+	.reset(reset),
+	.btn_break(btn_break),
+	.btn_ctrl_break(btn_ctrl_break),
+	.osd_break(osd_break),
+	.osd_ctrl(osd_ctrl)
+);
 
 // ------------------------------------------------------------------ memory
 // Same map as AcornElectron.sv. ext_A[18] = 1: sideways RAM, else ROM.
@@ -100,13 +124,13 @@ always @(*) begin
 	ram_data = (mem_addr[18:17] == 2'b10) ? ram_dout : 8'h00;
 end
 
-// 112 KB ROM image, writable from ioctl index 0 while in reset
+// 112 KB ROM image, written by an ioctl index 0 download
 sim_spram #(8, 17, 114688, "ELK.hex") rom
 (
 	.clock(clk_sys),
-	.address(reset ? ioctl_addr[16:0] : rom_addr),
+	.address(rom_download ? ioctl_addr[16:0] : rom_addr),
 	.data(ioctl_dout),
-	.wren(!ioctl_index && ioctl_wr && reset),
+	.wren(rom_download && ioctl_wr),
 	.q(rom_dout)
 );
 
@@ -123,23 +147,20 @@ sim_spram #(8, 17, 131072, "") ram
 );
 
 // --------------------------------------------------------------- joysticks
-// Copied from AcornElectron.sv.
+// The same module as AcornElectron.sv (rtl/electron_input.sv).
 
-wire [15:0] joya1 = joystick_l_analog_0;
-wire [15:0] joya2 = joystick_l_analog_1;
-wire [31:0] joy1 = joystick_0;
-wire [31:0] joy2 = joystick_1;
-
-wire [9:0] center_joystick_y1 = 8'd128 + joya1[15:8];
-wire [9:0] center_joystick_x1 = 8'd128 + joya1[7:0];
-wire [9:0] center_joystick_y2 = 8'd128 + joya2[15:8];
-wire [9:0] center_joystick_x2 = 8'd128 + joya2[7:0];
-
-wire [31:0] acorn_joy1 = swap_joysticks ? joy2 : joy1;
-wire [31:0] acorn_joy2 = swap_joysticks ? joy1 : joy2;
-
-wire [15:0] acorn_ajoy1 = swap_joysticks ? {(8'hFF - center_joystick_y2[7:0]),(8'hFF - center_joystick_x2[7:0])} : {(8'hFF - center_joystick_y1[7:0]),(8'hFF - center_joystick_x1[7:0])};
-wire [15:0] acorn_ajoy2 = swap_joysticks ? {(8'hFF - center_joystick_y1[7:0]),(8'hFF - center_joystick_x1[7:0])} : {(8'hFF - center_joystick_y2[7:0]),(8'hFF - center_joystick_x2[7:0])};
+wire [7:0] adc1_x, adc1_y, adc2_x, adc2_y;
+wire       fire1, fire2;
+wire [4:0] fb_joy;
+electron_joy electron_joy
+(
+	.joy1(joystick_0[15:0]), .joy2(joystick_1[15:0]),
+	.joya1(joystick_l_analog_0), .joya2(joystick_l_analog_1),
+	.swap(swap_joysticks),
+	.adc1_x(adc1_x), .adc1_y(adc1_y), .adc2_x(adc2_x), .adc2_y(adc2_y),
+	.fire1(fire1), .fire2(fire2),
+	.fb_joy(fb_joy)
+);
 
 // -------------------------------------------------------------------- core
 
@@ -161,6 +182,9 @@ ElectronFpga_core Electron
 	.clk_40M00(1'b0),
 
 	.hard_reset_n(~reset),
+	.osd_break(osd_break),
+	.osd_ctrl(osd_ctrl),
+	.cpu_speed(cpu_speed),
 	.ps2_key(ps2_key),
 
 	.video_cepix(ce_pix),
@@ -193,19 +217,20 @@ ElectronFpga_core Electron
 	.cassette_in(casdout),
 	.cassette_out(),
 
-	.vid_mode({1'b0, vid_interlaced}),
+	.vid_mode({1'b0, cfg_interlace}),
 
 	.test(),
 	.avr_RxD(1'b1),
 	.avr_TxD(),
 	.cpu_addr(cpu_addr),
 
-	.joystick1_x(acorn_ajoy1[7:0]),
-	.joystick1_y(acorn_ajoy1[15:8]),
-	.joystick1_fire(acorn_joy1[4]),
-	.joystick2_x(acorn_ajoy2[7:0]),
-	.joystick2_y(acorn_ajoy2[15:8]),
-	.joystick2_fire(acorn_joy2[4]),
+	.joystick1_x(adc1_x),
+	.joystick1_y(adc1_y),
+	.joystick1_fire(fire1),
+	.joystick2_x(adc2_x),
+	.joystick2_y(adc2_y),
+	.joystick2_fire(fire2),
+	.fb_joy(fb_joy),
 
 	.h_cnt(h_cnt),
 	.v_cnt(v_cnt)

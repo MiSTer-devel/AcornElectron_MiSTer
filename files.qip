@@ -12,4 +12,5 @@ set_global_assignment -name QIP_FILE rtl/xtra_pll.qip
 set_global_assignment -name VERILOG_FILE rtl/cassette.v
 set_global_assignment -name VERILOG_FILE rtl/square_gen.v
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/electron_input.sv
 set_global_assignment -name SYSTEMVERILOG_FILE AcornElectron.sv

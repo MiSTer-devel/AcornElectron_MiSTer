@@ -58,6 +58,7 @@ entity ElectronULA is
         data_en   : out std_logic;
         R_W_n     : in  std_logic;
         RST_n     : in  std_logic;
+        POR_n     : in  std_logic := '1';  -- MiSTer: power-on reset (sets the &FE00 bit 1 power-on flag)
         IRQ_n     : out std_logic;
         NMI_n     : in  std_logic;
 
@@ -117,6 +118,10 @@ entity ElectronULA is
         joystick2_x    : in std_logic_vector(7 downto 0) := x"80";
         joystick2_y    : in std_logic_vector(7 downto 0) := x"80";
         joystick2_fire : in std_logic := '0';
+
+        -- First Byte joystick interface (&FCC0): active high, 0 up, 1 down,
+        -- 2 left, 3 right, 4 fire
+        fb_joy         : in std_logic_vector(4 downto 0) := (others => '0');
 
         -- Beam position for the tape overlay
         h_cnt     : out std_logic_vector(10 downto 0);
@@ -336,7 +341,8 @@ architecture behavioral of ElectronULA is
   signal adc_chan          : std_logic_vector(3 downto 0);
   signal plus_1_stat_reg   : std_logic_vector(7 downto 0);
   signal plus_1_adc_data   : std_logic_vector(7 downto 0);
-  signal plus_1_adc_n_intr : std_logic;
+  signal plus_1_adc_n_intr : std_logic := '0';  -- 0 = conversion complete (power-on: complete)
+  signal plus_1_adc_count  : unsigned(9 downto 0) := (others => '0');
 
 -- Helper function to cast an std_logic value to an integer
 function sl2int (x: std_logic) return integer is
@@ -534,6 +540,7 @@ begin
                 mc6522_data               when mc6522_enable = '1' and IncludeMMC else
                 plus_1_stat_reg           when addr = x"FC72" else
                 plus_1_adc_data           when addr = x"FC70" else
+                "111" & not fb_joy        when addr(15 downto 4) = x"FCC" else  -- First Byte (A3-A0 not decoded)
                 x"F1"; -- todo FIXEME
 
     data_en  <= '1'                       when addr(15) = '0' else
@@ -542,6 +549,7 @@ begin
                 '1'                       when mc6522_enable = '1' and IncludeMMC else
                 '1'                       when addr = x"FC72" else
                 '1'                       when addr = x"FC70" else
+                '1'                       when addr(15 downto 4) = x"FCC" else
                 '0';
 
     -- Register FEx0 is the Interrupt Status Register (Read Only)
@@ -568,6 +576,12 @@ begin
 
             if (RST_n = '0') then
 
+               -- MiSTer: a power-on reset (OSD Reset / USER button) sets the
+               -- power-on flag again, so the MOS does a cold start; BREAK does not
+               if (POR_n = '0') then
+                   power_on_reset      <= '1';
+                   delayed_clear_reset <= '0';
+               end if;
                isr             <= (others => '0');
                ier             <= (others => '0');
                screen_base     <= (others => '0');
@@ -765,10 +779,6 @@ begin
                 if (cpu_clken = '1') then
                     if delayed_clear_reset = '1' then
                         power_on_reset <= '0';
-                    end if;
-                    -- Plus 1: a write to &FC70 selects the ADC channel (a read returns the result)
-                    if (addr = x"FC70" and R_W_n = '0') then
-                        adc_chan <= data_in(3 downto 0);
                     end if;
                     ---- Detect control+caps 1...4 and change video format
                     if (addr = x"9fff" and page_enable = '1' and page(2 downto 1) = "00") then
@@ -1475,24 +1485,32 @@ begin
 -- from https://github.com/Sector14/acorn-electron-core (Gary Preston)
 --------------------------------------------------------
 
+    -- ADC0844 as MAME models it (devices/machine/adc0844.cpp): a write to
+    -- &FC70 selects the channel and starts a 40 us conversion; at the end the
+    -- result is latched and /INTR goes low (status bit 6 = 0, "conversion
+    -- end"); a read of &FC70 returns the result and sets /INTR high again.
     adc : process(clk_16M00)
     begin
         if rising_edge(clk_16M00) then
-            if (addr = x"FC70") then -- read or write and we clear the interrupt
+            if cpu_clken = '1' and addr = x"FC70" then
                 plus_1_adc_n_intr <= '1';
-            else
-                plus_1_adc_n_intr <= '0';
+                if R_W_n = '0' then
+                    adc_chan         <= data_in(3 downto 0);
+                    plus_1_adc_count <= to_unsigned(640, plus_1_adc_count'length);  -- 40 us at 16 MHz
+                end if;
+            elsif plus_1_adc_count /= 0 then
+                plus_1_adc_count <= plus_1_adc_count - 1;
+                if plus_1_adc_count = 1 then
+                    plus_1_adc_n_intr <= '0';
+                    case adc_chan is
+                        when "0100" => plus_1_adc_data <= joystick1_x;  -- ch1 X
+                        when "0101" => plus_1_adc_data <= joystick1_y;  -- ch2 Y
+                        when "0110" => plus_1_adc_data <= joystick2_x;  -- ch3 X
+                        when "0111" => plus_1_adc_data <= joystick2_y;  -- ch4 Y
+                        when others => plus_1_adc_data <= x"80";        -- differential modes not modelled
+                    end case;
+                end if;
             end if;
-
-            case adc_chan is
-                -- joy1
-                when "0100" => plus_1_adc_data <= joystick1_x;  -- ch1 X
-                when "0101" => plus_1_adc_data <= joystick1_y;  -- ch2 Y
-                -- joy2
-                when "0110" => plus_1_adc_data <= joystick2_x;  -- ch3 X
-                when "0111" => plus_1_adc_data <= joystick2_y;  -- ch4 Y
-                when others => plus_1_adc_data <= x"80";        -- no other mode supported
-            end case;
         end if;
     end process;
 

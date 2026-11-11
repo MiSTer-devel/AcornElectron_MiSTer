@@ -86,6 +86,8 @@ static std::vector<std::pair<int, std::string>> opt_ram_dumps;
 static std::vector<std::pair<int, std::string>> opt_peeks;   // frame, "addr[,addr...]"
 static int reset_hold = 0;
 static int pulse_cycles = 0;
+static int osd_pulse_cycles = 0;
+static std::vector<int> opt_osd_break, opt_osd_ctrl_break;
 static bool last_relay = false;
 static unsigned joy_mask[2] = { 0, 0 };
 
@@ -125,11 +127,12 @@ static inline void step() {
 	}
 	if (pulse_cycles > 0 && --pulse_cycles == 0) top->tape_rewind = 0;
 
-	// Reset: power-on, --reset-at-frame, and held while a ROM image loads
-	// (AcornElectron.sv only writes the ROM while reset is high).
-	bool rom_loading = bus.HasQueue() || (top->ioctl_download && top->ioctl_index == 0);
+	// Reset: power-on, --reset-at-frame, and held until a queued ROM image
+	// starts loading (the download itself resets the machine, as on MiSTer).
+	bool rom_queued = bus.HasQueue();
 	if (reset_hold > 0) reset_hold--;
-	top->reset = (main_time < (vluint64_t)initial_reset) || reset_hold > 0 || rom_loading;
+	top->reset_in = (main_time < (vluint64_t)initial_reset) || reset_hold > 0 || rom_queued;
+	if (osd_pulse_cycles > 0 && --osd_pulse_cycles == 0) { top->btn_break = 0; top->btn_ctrl_break = 0; }
 
 	tick();
 }
@@ -220,9 +223,14 @@ static void add_key_text(int frame, const std::string &text) {
 			if (n == 'n' || n == 'r') { push(0x5A, false, false, false); continue; }  // RETURN
 			if (n == 'b') { push(0x66, false, false, false); continue; }             // DELETE
 			if (n == 'e') { push(0x76, false, false, false); continue; }             // ESCAPE
-			if (n == 'k') { push(0x09, false, false, false); continue; }             // F10 = BREAK
-			if (n == 'K') { push(0x09, false, false, true); continue; }              // CTRL-BREAK
-			if (n == 'S') { push(0x09, false, true, false); continue; }              // SHIFT-BREAK
+			if (n == 'k') { push(0x78, false, false, false); continue; }             // F11 = BREAK
+			if (n == 'K') { push(0x78, false, false, true); continue; }              // CTRL-BREAK
+			if (n == 'S') { push(0x78, false, true, false); continue; }              // SHIFT-BREAK
+			if (n == 'f' && j + 1 < text.size() && isdigit(text[j + 1])) {           // \f<d>: FUNC+d (PC F1-F9, F10 = f0)
+				static const unsigned char fcode[10] = { 0x09,0x05,0x06,0x04,0x0C,0x03,0x0B,0x83,0x0A,0x01 };
+				push(fcode[text[++j] - '0'], false, false, false);
+				continue;
+			}
 			if (n == 'c') { push(0x58, false, false, false); continue; }             // CAPS LOCK (FUNC)
 			if (n == 'U') { push(0x75, true, false, false); continue; }
 			if (n == 'D') { push(0x72, true, false, false); continue; }
@@ -253,6 +261,8 @@ static bool on_frame(int frame) {
 	}
 	for (int f : opt_tape_rewind) if (f == frame) { printf("FRAME %d: tape stop & rewind\n", frame); top->tape_rewind = 1; pulse_cycles = 64; }
 	for (int r : opt_reset_frames) if (r == frame) { printf("FRAME %d: reset\n", frame); reset_hold = 2000; }
+	for (int f : opt_osd_break) if (f == frame) { printf("FRAME %d: OSD BREAK\n", frame); top->btn_break = 1; osd_pulse_cycles = 64; }
+	for (int f : opt_osd_ctrl_break) if (f == frame) { printf("FRAME %d: OSD Ctrl-BREAK\n", frame); top->btn_ctrl_break = 1; osd_pulse_cycles = 64; }
 	for (auto &j : joy_events) if (j.frame == frame) joy_mask[j.stick] = j.mask;
 	top->joystick_0 = joy_mask[0];
 	top->joystick_1 = joy_mask[1];
@@ -304,6 +314,7 @@ static void usage() {
 	printf("  --hash                        Print FBHASH every field\n");
 	printf("  --send-keys <frame>:<text>    Type text. \\n RETURN, \\b DELETE, \\e ESCAPE, \\k BREAK,\n");
 	printf("                                \\K CTRL-BREAK, \\S SHIFT-BREAK, \\c CAPS LOCK, \\U\\D\\L\\R cursor,\n");
+	printf("                                \\f<d> FUNC+d (PC F-key),\n");
 	printf("                                \\^X CTRL+X. Letters type as capitals (CAPS LOCK on)\n");
 	printf("  --key-hold <n> / --key-gap <n> Fields a key is held / between keys (default 3/3)\n");
 	printf("  --joy <frame>:<hexmask>       Joystick 1 buttons from frame (bit 0 R,1 L,2 D,3 U,4 Fire)\n");
@@ -311,7 +322,10 @@ static void usage() {
 	printf("  --analog <frame>:<x>,<y>      Stick 1 analog, signed -127..127\n");
 	printf("  --analog2 <frame>:<x>,<y>     Stick 2 analog\n");
 	printf("  --swap-joysticks              OSD Swap Joysticks: Yes\n");
-	printf("  --interlaced                  vid_mode 01 (15 kHz interlaced; default 00 is progressive)\n");
+	printf("  --interlaced                  OSD Interlace: On (vid_mode 01; default 00 is progressive)\n");
+	printf("  --cpu-speed <0|1|2>           OSD CPU speed: Normal, 2 MHz, 4 MHz\n");
+	printf("  --osd-break <n>               OSD BREAK button at field n. Repeatable\n");
+	printf("  --osd-ctrl-break <n>          OSD Ctrl-BREAK button at field n. Repeatable\n");
 	printf("  --rom <file>                  Load a 112 KB ROM image (ELK.mif layout) at power-on\n");
 	printf("  --tape <file>                 Load a tape (OSD F2) at --tape-frame (default 0)\n");
 	printf("  --tape-frame <n>\n");
@@ -373,6 +387,9 @@ static int parse_args(int argc, char **argv) {
 		}
 		else if (a == "--swap-joysticks") top->swap_joysticks = 1;
 		else if (a == "--interlaced") top->vid_interlaced = 1;
+		else if (a == "--cpu-speed") top->osd_cpu_speed = atoi(next().c_str()) & 3;
+		else if (a == "--osd-break") opt_osd_break.push_back(atoi(next().c_str()));
+		else if (a == "--osd-ctrl-break") opt_osd_ctrl_break.push_back(atoi(next().c_str()));
 		else if (a == "--rom") opt_rom = next();
 		else if (a == "--tape") opt_tape = next();
 		else if (a == "--tape-frame") opt_tape_frame = atoi(next().c_str());

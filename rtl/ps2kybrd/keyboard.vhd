@@ -12,7 +12,9 @@ entity keyboard is
         col        : out std_logic_vector(3 downto 0);
         row        : in  std_logic_vector(13 downto 0);
         break      : out std_logic;
-        turbo      : out std_logic_vector(1 downto 0)
+        -- OSD buttons (active high): BREAK, and CTRL held for Ctrl-BREAK
+        ext_break  : in  std_logic := '0';
+        ext_ctrl   : in  std_logic := '0'
         );
 end entity;
 
@@ -20,6 +22,17 @@ architecture rtl of keyboard is
 
     type   key_matrix is array(0 to 13) of std_logic_vector(3 downto 0);
     signal keys       : key_matrix;
+    -- PC F1-F9, F10 held: index = Electron digit (F10 = 0); sent as FUNC + digit
+    signal fkeys      : std_logic_vector(9 downto 0);
+    signal key_break  : std_logic;
+    -- the matrix the CPU sees: keys + F-keys + OSD CTRL
+    signal keys_out   : key_matrix;
+    -- F-key sequencing (below): FUNC is down before the digit and up after it
+    signal fdigit     : std_logic_vector(9 downto 0) := (others => '0');
+    signal ffunc      : std_logic := '0';
+    signal fdelay     : unsigned(19 downto 0) := (others => '0');
+    signal fsel       : std_logic_vector(9 downto 0) := (others => '0');
+    signal fstate     : std_logic_vector(1 downto 0) := "00";
     signal press    : std_logic;
 
     signal keyb_data  : std_logic_vector(7 downto 0);
@@ -28,14 +41,78 @@ architecture rtl of keyboard is
     
 begin
 
-    process(keys, row)
+    -- FUNC (CAPS LK) + digit for the PC function keys: the Electron's f0-f9.
+    -- Digit d is column 0 of row 13-d (d = 1..9), 0 is row 3; FUNC is row 13 bit 1.
+    -- One F-key press plays FUNC down, digit down 20 ms later (held at least
+    -- 60 ms, longer while the key is held), digit up, FUNC up 20 ms later.
+    -- The MOS scans the keyboard on its 50 Hz tick, so each step lasts a scan.
+    process(clk)
+    begin
+        if rising_edge(clk) then
+            case fstate is
+            when "00" =>                                     -- idle
+                fdelay <= (others => '0');
+                if fkeys /= "0000000000" then
+                    fsel   <= fkeys;
+                    ffunc  <= '1';
+                    fstate <= "01";
+                end if;
+            when "01" =>                                     -- FUNC alone
+                fdelay <= fdelay + 1;
+                if fdelay = 320000 then
+                    fdigit <= fsel;
+                    fdelay <= (others => '0');
+                    fstate <= "10";
+                end if;
+            when "10" =>                                     -- FUNC + digit
+                if fdelay /= 960000 then
+                    fdelay <= fdelay + 1;
+                elsif (fkeys and fsel) = "0000000000" then
+                    fdigit <= (others => '0');
+                    fdelay <= (others => '0');
+                    fstate <= "11";
+                end if;
+            when others =>                                   -- FUNC alone again
+                fdelay <= fdelay + 1;
+                if fdelay = 320000 then
+                    ffunc  <= '0';
+                    fstate <= "00";
+                end if;
+            end case;
+        end if;
+    end process;
+
+    process(keys, fdigit, ffunc, ext_ctrl)
+        variable k : key_matrix;
+    begin
+        k := keys;
+        for d in 1 to 9 loop
+            if fdigit(d) = '1' then
+                k(13 - d)(0) := '0';
+            end if;
+        end loop;
+        if fdigit(0) = '1' then
+            k(3)(0) := '0';
+        end if;
+        if ffunc = '1' then
+            k(13)(1) := '0';
+        end if;
+        if ext_ctrl = '1' then
+            k(13)(2) := '0';
+        end if;
+        keys_out <= k;
+    end process;
+
+    break <= key_break and not ext_break;
+
+    process(keys_out, row)
         variable i    : integer;
         variable tmp  : std_logic_vector(3 downto 0);
     begin
         tmp := "1111";
         for i in 0 to 13 loop
             if (row(i) = '0') then
-                tmp := tmp and keys(i);
+                tmp := tmp and keys_out(i);
             end if;
         end loop;
         col <= tmp;
@@ -54,8 +131,8 @@ begin
     begin
         if rst_n = '0' then
 
-            turbo    <= "01"; -- 2MHz
-            break    <= '1';
+            key_break <= '1';
+            fkeys    <= (others => '0');
             keys( 0) <= (others => '1');
             keys( 1) <= (others => '1');
             keys( 2) <= (others => '1');
@@ -82,11 +159,17 @@ begin
                     
                     case keyb_data is
                         -- Special keys
-                        when X"05" => turbo       <= "00";     -- F1 (1MHz)
-                        when X"06" => turbo       <= "01";     -- F2 (2MMz)
-                        when X"04" => turbo       <= "10";     -- F3 (4MHz)
-                        when X"0C" => turbo       <= "11";     -- F4 (8MHz)
-                        when X"09" => break       <= not press;  -- F10 (BREAK)
+                        when X"05" => fkeys(1) <= press;          -- F1  = FUNC 1 (f1)
+                        when X"06" => fkeys(2) <= press;          -- F2  = FUNC 2
+                        when X"04" => fkeys(3) <= press;          -- F3  = FUNC 3
+                        when X"0C" => fkeys(4) <= press;          -- F4  = FUNC 4
+                        when X"03" => fkeys(5) <= press;          -- F5  = FUNC 5
+                        when X"0B" => fkeys(6) <= press;          -- F6  = FUNC 6
+                        when X"83" => fkeys(7) <= press;          -- F7  = FUNC 7
+                        when X"0A" => fkeys(8) <= press;          -- F8  = FUNC 8
+                        when X"01" => fkeys(9) <= press;          -- F9  = FUNC 9
+                        when X"09" => fkeys(0) <= press;          -- F10 = FUNC 0 (f0)
+                        when X"78" => key_break <= not press;     -- F11 = BREAK
                         -- Key Matrix
                         when X"74" => keys( 0)(0) <= not press;  -- RIGHT           
                         when X"69" => keys( 0)(1) <= not press;  -- END (COPY)

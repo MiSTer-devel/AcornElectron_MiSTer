@@ -76,7 +76,8 @@ V_SRC = \
 	sim.v \
 	$(CORE_V) \
 	$(RTL)/cassette.v \
-	$(RTL)/square_gen.v
+	$(RTL)/square_gen.v \
+	$(RTL)/electron_input.sv
 
 C_SRC = \
 	sim_main.cpp \

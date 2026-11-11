@@ -43,33 +43,49 @@ assign HDMI_BOB_DEINT = 0;
 
 wire [1:0] ar = status[9:8];
 
-assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
-
-
-
+// OSD layout: ~/dev2/osd-standard.md, video-standard.md, tape-standard.md.
+// Status bits kept from the old menu: 3-5 Scandoubler Fx, 8-9 Aspect ratio,
+// 10 Swap joysticks, 12 Tape input, 13 Tape audio, 14 Tape overlay (1 = Off),
+// 15 Rewind tape. New: 16-17 CPU speed, 18 Interlace, 19-20 Scale,
+// 22 BREAK, 23 Ctrl-BREAK.
 `include "build_id.v" 
 parameter CONF_STR = {
 	"AcornElectron;;",
 	"-;",
-	"S0,VHD;",
-//	"OC,Autostart,Yes,No;",
+	"SC0,VHD,Pri. disk (MMB);",
+	"H1F2,UEFCAS,Tape;",
+	"h1-;",
+	"F0,ROM,Load ROM;",
 	"-;",
-	"O89,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
-	"O35,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;", 
-	"OA,Swap Joysticks,No,Yes;",
+	"P1,Machine;",
+	"P2,Video;",
+	"P3,Input;",
+	"P4,Audio;",
+	"P5,Advanced;",
 	"-;",
-	"OC,Tape Input,File,ADC;",
-	"H0F2,UEF,Load Cassette;",
-	"H0TF,Stop & Rewind;",
-	"OD,Monitor Tape Sound,No,Yes;",
-	"OE,Show Tape Status,Yes,No;",
-	"-;",
-//	"O4,Model,B(MOS6502),Master(R65SC12);",
-//	"O56,Co-Processor,None,MOS65C02;",
-//	"O78,VIDEO,sRGB-interlaced,sRGB-non-interlaced,SVGA-50Hz,SVGA-60Hz;",
-	"-;",
-	"R0,Reset;",
+	"h0-,Changes pending;",
+	"R0,Apply and reset;",
+
+	"P1O[17:16],CPU speed,Normal,2 MHz,4 MHz;",
+	"P1-;",
+	"P1T[15],Rewind tape;",
+	"P1T[22],BREAK;",
+	"P1T[23],Ctrl-BREAK;",
+
+	"P2O[18],Interlace,Off,On;",
+	"P2-;",
+	"P2O[9:8],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
+	"P2O[20:19],Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer;",
+	"P2O[5:3],Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
+	"P2-;",
+	"P2O[14],Tape overlay,On,Off;",
+
+	"P3O[10],Swap joysticks,No,Yes;",
+
+	"P4O[13],Tape audio,Off,On;",
+
+	"P5O[12],Tape input,File,ADC;",
+
 	"JA,Fire;",
 	"V,v",`BUILD_DATE
 };
@@ -164,6 +180,36 @@ wire        img_readonly;
 wire [63:0] img_size;
 
 
+/////////////////  RESET  /////////////////////////
+
+// Power-on reset: the board's reset, OSD Apply and reset, the USER button, and
+// a ROM download (Load ROM / boot.rom). The ULA's power-on flag is set again,
+// so the MOS does a cold start. BREAK and Ctrl-BREAK are OSD buttons (P1).
+wire rom_download = ioctl_download && ioctl_index == 0;
+wire reset = RESET | status[0] | buttons[1] | rom_download;
+
+// The settings the machine runs with, taken from the OSD at every reset
+// (osd-standard.md). Video scaling, input and tape monitor rows act at once
+// and read status directly.
+reg [31:0] cfg;
+always @(posedge clk_sys) if (reset) cfg <= status;
+wire pending = status[18:16] != cfg[18:16];
+
+wire [1:0] cpu_speed = (cfg[17:16] == 2'd0) ? 2'b01 :   // Normal: 2 MHz ROM, 1 MHz contended RAM
+                       (cfg[17:16] == 2'd1) ? 2'b10 :   // 2 MHz, no contention
+                                              2'b11;    // 4 MHz
+
+wire osd_break, osd_ctrl;
+electron_osd_buttons osd_buttons
+(
+	.clk(clk_sys),
+	.reset(reset),
+	.btn_break(status[22]),
+	.btn_ctrl_break(status[23]),
+	.osd_break(osd_break),
+	.osd_ctrl(osd_ctrl)
+);
+
 hps_io #(.CONF_STR(CONF_STR)) hps_io
 (
 	.clk_sys(clk_sys),
@@ -175,7 +221,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.gamma_bus(gamma_bus),
 	.direct_video(direct_video),
 
-	.status_menumask({status[12]}),
+	.status_menumask({status[12], pending}),  // bit 1: tape input ADC hides the Tape row
 
 	.ps2_key(ps2_key),
 
@@ -203,10 +249,6 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.joystick_l_analog_0(joya1),
 	.joystick_l_analog_1(joya2)
 );
-
-/////////////////  RESET  /////////////////////////
-
-wire reset = RESET | status[0] | buttons[1] ;
 
 ////////////////  MEMORY  /////////////////////////
 
@@ -279,9 +321,9 @@ reg   [7:0] rom_data;
 spram #(8, 17, 114688, "roms/ELK.mif") rom
 (
 	.clock(clk_sys),
-	.address(reset ? ioctl_addr[16:0] : rom_addr),
+	.address(rom_download ? ioctl_addr[16:0] : rom_addr),
 	.data(ioctl_dout),
-	.wren(!ioctl_index && ioctl_wr && reset),
+	.wren(rom_download && ioctl_wr),
 	.q(rom_dout)
 );
 
@@ -330,17 +372,18 @@ always @(posedge clk_sys) old_we <= mem_we_n;
 
 wire reset_req;
 
-wire [9:0] center_joystick_y1   =  8'd128 + joya1[15:8];
-wire [9:0] center_joystick_x1   =  8'd128 + joya1[7:0];
-wire [9:0] center_joystick_y2   =  8'd128 + joya2[15:8];
-wire [9:0] center_joystick_x2   =  8'd128 + joya2[7:0];
-
-wire [31:0] acorn_joy1 = status[10] ? joy2 : joy1;
-wire [31:0] acorn_joy2 = status[10] ? joy1 : joy2;
-
-wire [15:0] acorn_ajoy1 = status[10] ? {(8'hFF - center_joystick_y2[7:0]),(8'hFF - center_joystick_x2[7:0])} : {(8'hFF - center_joystick_y1[7:0]),(8'hFF - center_joystick_x1[7:0])};
-wire [15:0] acorn_ajoy2 = status[10] ? {(8'hFF - center_joystick_y1[7:0]),(8'hFF - center_joystick_x1[7:0])} : {(8'hFF - center_joystick_y2[7:0]),(8'hFF - center_joystick_x2[7:0])};
-
+// Joysticks -> Plus 1 ADC / fire and First Byte (rtl/electron_input.sv)
+wire [7:0] adc1_x, adc1_y, adc2_x, adc2_y;
+wire       fire1, fire2;
+wire [4:0] fb_joy;
+electron_joy electron_joy
+(
+	.joy1(joy1), .joy2(joy2), .joya1(joya1), .joya2(joya2),
+	.swap(status[10]),
+	.adc1_x(adc1_x), .adc1_y(adc1_y), .adc2_x(adc2_x), .adc2_y(adc2_y),
+	.fire1(fire1), .fire2(fire2),
+	.fb_joy(fb_joy)
+);
 
 wire show_cas_overlay = ~status[14];
 
@@ -355,6 +398,9 @@ ElectronFpga_core Electron
 	.clk_40M00(clk_40),
 
 	.hard_reset_n(~reset),
+	.osd_break(osd_break),
+	.osd_ctrl(osd_ctrl),
+	.cpu_speed(cpu_speed),
 
 	.ps2_key(ps2_key),
 
@@ -388,28 +434,17 @@ ElectronFpga_core Electron
 	
 	.cassette_in(status[12] ? adc_cassette_bit : casdout ),
 	.cassette_out(),
-	//     -- Format of Video
-   //     -- 00 - sRGB - interlaced
-   //     -- 01 - sRGB - non interlaced
-   //     -- 10 - SVGA - 50Hz
-   //     -- 11 - SVGA - 60Hz
-	//.vid_mode(2'b11)
-	.vid_mode(2'b00), // 15 kHz non-interlaced (01 = interlaced)
-	//.vid_mode(2'b01) // 15 kHz interlaced
-//	.vid_mode(status[8:7])
-	
+	// 00: 15 kHz non-interlaced (312 lines), 01: interlaced (312/313-line
+	// fields, the same picture in both). The SVGA modes are not built.
+	.vid_mode({1'b0, cfg[18]}),
 
-/*
-	.keyb_dip({4'd0, ~status[12], ~status[9:7]}),
-*/
-   // // analog -127..+127, Y: [15:8], X: [7:0]
-	.joystick1_x(    acorn_ajoy1[7:0]),
-	.joystick1_y(    acorn_ajoy1[15:8]),
-	.joystick1_fire( acorn_joy1[4]),
-
-	.joystick2_x(   acorn_ajoy2[7:0]),
-	.joystick2_y(   acorn_ajoy2[15:8]),
-	.joystick2_fire(acorn_joy2[4]),
+	.joystick1_x(adc1_x),
+	.joystick1_y(adc1_y),
+	.joystick1_fire(fire1),
+	.joystick2_x(adc2_x),
+	.joystick2_y(adc2_y),
+	.joystick2_fire(fire2),
+	.fb_joy(fb_joy),
 	
 	
 	.h_cnt(h_cnt),
@@ -470,6 +505,21 @@ video_mixer #(.GAMMA(1)) video_mixer
    .VSync(vs),
    .HBlank(hblank),
    .VBlank(vblank)
+);
+
+video_freak video_freak
+(
+	.*,
+	.VGA_DE_IN(VGA_DE),
+	.VGA_DE(),
+	// Original: the real shape of the 640 x 256 active picture. 16 MHz pixels
+	// on a PAL raster (square-pixel rate 7.375 MHz) have a pixel aspect of
+	// 7.375/16, so 640*7.375/16 : 256 = 295:256 (1.15:1).
+	.ARX((!ar) ? 12'd295 : (ar - 1'd1)),
+	.ARY((!ar) ? 12'd256 : 12'd0),
+	.CROP_SIZE(12'd0),
+	.CROP_OFF(5'd0),
+	.SCALE({1'b0, status[20:19]})
 );
 
 

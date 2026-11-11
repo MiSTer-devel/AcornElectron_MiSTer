@@ -76,8 +76,8 @@ entity ElectronFpga_core is
         cassette_out   : out std_logic;
 
         -- Format of Video
-        -- 00 - sRGB - interlaced
-        -- 01 - sRGB - non interlaced
+        -- 00 - sRGB - non interlaced
+        -- 01 - sRGB - interlaced
         -- 10 - SVGA - 50Hz
         -- 11 - SVGA - 60Hz
         vid_mode       : in  std_logic_vector(1 downto 0);
@@ -97,6 +97,13 @@ entity ElectronFpga_core is
 		  joystick2_x   : in std_logic_vector(7 downto 0);
 		  joystick2_y   : in std_logic_vector(7 downto 0);
 		  joystick2_fire   : in std_logic;
+		  -- First Byte joystick: active high, 0 up, 1 down, 2 left, 3 right, 4 fire
+		  fb_joy        : in std_logic_vector(4 downto 0) := (others => '0');
+		  -- CPU speed (ULA turbo): 00 1 MHz, 01 Normal, 10 2 MHz, 11 4 MHz
+		  cpu_speed     : in std_logic_vector(1 downto 0) := "01";
+		  -- OSD buttons (active high): BREAK; CTRL held (with BREAK: Ctrl-BREAK)
+		  osd_break     : in std_logic := '0';
+		  osd_ctrl      : in std_logic := '0';
 		  h_cnt: out std_logic_vector(10  downto 0);
 		  v_cnt: out std_logic_vector( 9  downto 0)
 
@@ -118,7 +125,6 @@ architecture behavioral of ElectronFpga_core is
     signal ula_enable        : std_logic;
 
     signal key_break         : std_logic;
-    signal key_turbo         : std_logic_vector(1 downto 0);
     signal sound             : std_logic;
     signal kbd_data          : std_logic_vector(3 downto 0);
 
@@ -164,7 +170,7 @@ begin
         Include32KRAM    => true,
         IncludeVGA       => false,  -- MiSTer: 15 kHz only, the scaler does the rest
         IncludeJafaMode7 => IncludeJafaMode7,
-        LimitROMSpeed    => true,   -- turbo modes: ROM at most 2 MHz
+        LimitROMSpeed    => false,  -- 4 MHz: ROM (BASIC, MOS) at 4 MHz too
         LimitIOSpeed     => true    -- turbo modes: IO (and the MMC VIA) at 1 MHz
     )
     port map (
@@ -223,7 +229,9 @@ begin
 
         -- Clock Generation
         cpu_clken_out  => cpu_clken,
-        turbo          => key_turbo,
+        turbo          => cpu_speed,
+        POR_n          => hard_reset_n,
+        fb_joy         => fb_joy,
 
   		  joystick1_x   =>joystick1_x,
 		  joystick1_y  =>joystick1_y,
@@ -245,7 +253,8 @@ begin
         col        => kbd_data,
         row        => cpu_a(13 downto 0),
         break      => key_break,
-        turbo      => key_turbo
+        ext_break  => osd_break,
+        ext_ctrl   => osd_ctrl
     );
 
     cpu_NMI_n      <= '1';
