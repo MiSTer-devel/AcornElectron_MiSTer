@@ -90,6 +90,8 @@ entity ElectronFpga_core is
         avr_TxD        : out   std_logic;
 
         cpu_addr       : out   std_logic_vector(15 downto 0);
+        -- sim debug: DO, R_W_n, Sync, Enable, DI (unused in the MiSTer top)
+        cpu_dbg        : out   std_logic_vector(18 downto 0);
 		  
 		  joystick1_x   : in std_logic_vector(7 downto 0);
 		  joystick1_y   : in std_logic_vector(7 downto 0);
@@ -118,6 +120,7 @@ architecture behavioral of ElectronFpga_core is
     signal RSTn              : std_logic;
     signal cpu_R_W_n         : std_logic;
     signal cpu_a             : std_logic_vector (23 downto 0);
+    signal cpu_sync          : std_logic;
     signal cpu_din           : std_logic_vector (7 downto 0);
     signal cpu_dout          : std_logic_vector (7 downto 0);
     signal cpu_IRQ_n         : std_logic;
@@ -134,7 +137,9 @@ architecture behavioral of ElectronFpga_core is
     signal cpu_clken         : std_logic;
     signal cpu_clken_r       : std_logic;
 
-    signal rom_latch         : std_logic_vector(3 downto 0);
+    signal rom_latch         : std_logic_vector(3 downto 0);   -- the ROM that is paged in
+    signal ula_rom_latch     : std_logic_vector(3 downto 0);   -- the ULA's own page register
+    signal exp_rom_latch     : std_logic_vector(3 downto 0) := (others => '0');  -- expansion (Plus 1) page register
 
     signal ext_enable        : std_logic;
 
@@ -158,7 +163,7 @@ begin
             IRQ_n           => cpu_IRQ_n,
             NMI_n           => cpu_NMI_n,
             R_W_n           => cpu_R_W_n,
-            Sync            => open,
+            Sync            => cpu_sync,
             A               => cpu_a,
             DI              => cpu_din,
             DO              => cpu_dout
@@ -227,7 +232,7 @@ begin
         caps      => caps_led,
         motor     => motor_led,
 
-        rom_latch => rom_latch,
+        rom_latch => ula_rom_latch,
 
         mode_init => vid_mode,
 
@@ -279,6 +284,25 @@ begin
     cpu_din <= ext_Dout       when ext_enable = '1' else
                ula_data       when ula_enable = '1' else
                x"F1";
+
+    -- MiSTer: ROM paging as on a real machine with a Plus 1 (and as MAME).
+    -- &FE05 writes also clear interrupts (bits 4-6). The ULA takes every
+    -- write (it only cares whether its keyboard/BASIC ROMs 8-11 are paged),
+    -- but the Plus 1 and other expansions latch the ROM number only when
+    -- bits 4-7 are 0. So the MOS's interrupt clears (e.g. &40 per tape byte,
+    -- &F4FF) don't page out ROM 12 (AP2) or a sideways ROM: before this,
+    -- *LOAD from a BASIC program crashed (Flappy Bird, Stairway to Hell).
+    process(clk_16M00)
+    begin
+        if rising_edge(clk_16M00) then
+            if RSTn = '0' then
+                exp_rom_latch <= (others => '0');
+            elsif cpu_clken = '1' and cpu_R_W_n = '0' and cpu_a(15 downto 0) = x"FE05" and cpu_dout(7 downto 4) = "0000" then
+                exp_rom_latch <= cpu_dout(3 downto 0);
+            end if;
+        end if;
+    end process;
+    rom_latch <= ula_rom_latch when ula_rom_latch(3 downto 2) = "10" else exp_rom_latch;
 
     -- Pipeline external memory interface
      -- External addresses 00000-3FFFF are routed to FLASH 80000-DFFFFF
@@ -384,6 +408,7 @@ begin
 
 
    cpu_addr <= cpu_a(15 downto 0);
+   cpu_dbg  <= cpu_dout & cpu_R_W_n & cpu_sync & cpu_clken & cpu_din;
 
    test <= (others => '0');
 

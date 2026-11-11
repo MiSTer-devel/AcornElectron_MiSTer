@@ -3,7 +3,7 @@
 ```bash
 cd vsim
 make                 # GHDL converts the VHDL core, then Verilator builds obj_dir/Vemu
-./regression.sh      # 23 tests: boot, joysticks, resets, F-keys, CPU speed, MODE 0-6 (~2 min, parallel)
+./regression.sh      # 29 tests: boot, joysticks, resets, F-keys, CPU speed, MODE 0-6, tapes (~4 min, parallel; tapes need ../software)
 ./obj_dir/Vemu       # GUI (ImGui window)
 ./obj_dir/Vemu --help
 ```
@@ -50,6 +50,7 @@ Run from this directory: `$readmemh` opens `ELK.hex` (made from `../roms/ELK.mif
 | `--reset-at-frame <n>` | power-on reset (OSD Apply and reset) |
 | `--peek <frame>:<hex,hex>` / `--dump-ram <frame>:<file>` | read main RAM |
 | `--trace <f.vcd>` | VCD (build with `make TRACE=1`) |
+| `--cpu-trace <frame>[:<n>]` | from that field, keep the last n (4000) opcode fetches and &FE05 writes (`W<val>`); print them as `CPUTRACE` lines at the first BRKs. `TRACE_DUMP_AT=<frame>` also dumps at that field; `TRACE_ALLSEL=1` prints every &FE05 write as `ROMSEL` (else only selects other than ROMs 8 and 12) |
 
 Typing: letters come out as capitals (CAPS LOCK is on at boot); shifted symbols
 follow the Electron keyboard (`"` is SHIFT-2, `:` and `*` are on the PC `'` key).

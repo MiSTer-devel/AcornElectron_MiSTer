@@ -90,6 +90,13 @@ if [ -f $SW/mister11/tapes/Boxer_E.zip ] && [ -f $SW/free/0xC0DE6502/machine-aut
 	$SIM --headless --key-hold 2 --key-gap 2 --tape $SW/free/0xC0DE6502/machine-auto-detect-releases/machine-auto-detect.uef \
 		--tape-frame 100 --tape-turbo 8 --send-keys '120:*TAPE\nCHAIN""\n' --screenshot 700 --screenshot-dir "$OUT" \
 		--screenshot-prefix tape_mad --stop-at-frame 700 > "$OUT/tape_mad.log" 2>&1 &
+	# Flappy Bird (0xC0DE): a BASIC loader *LOADs the game. The MOS clears the
+	# tape interrupt with &40 to &FE05 per byte; that must not page out ROM 12
+	# (the Plus 1 latch ignores writes with bits 4-7 set), or the return into
+	# AP2's FILEV handler crashes. Field 1000: the attract screen.
+	$SIM --headless --key-hold 2 --key-gap 2 --tape $SW/free/0xC0DE6502/flappy-bird-releases/flappy-bird.uef \
+		--tape-frame 100 --tape-turbo 8 --send-keys '120:*TAPE\nCHAIN""\n' --screenshot 1000 --screenshot-dir "$OUT" \
+		--screenshot-prefix tape_flappy --stop-at-frame 1000 > "$OUT/tape_flappy.log" 2>&1 &
 fi
 
 # --- 6. OSD CPU speed: a 2000-step FOR loop, centiseconds into &78 --------
@@ -141,6 +148,7 @@ if [ $TAPES = 1 ]; then
 	shot_check tape_boxer_main ffb8fb706f11f961 "tape: Boxer as Main sends it (bit stream) at 8x to title"
 	shot_check tape_boxer ffb8fb706f11f961 "tape: gzipped Boxer UEF (core gunzip) at 8x to title"
 	shot_check tape_mad   8ea90fc274b9c1e5 "tape: MAD UEF at 8x (Detected: 5)"
+	shot_check tape_flappy 34cf42aaefe431af "tape: Flappy Bird (*LOAD from BASIC, ROM 12 kept paged) to attract screen"
 else
 	echo "SKIP  tapes (no ../software)"
 fi

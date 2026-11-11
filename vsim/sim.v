@@ -61,6 +61,7 @@ module emu (
 
 	// debug taps for sim_main.cpp
 	output     [15:0] dbg_cpu_addr,
+	output     [18:0] dbg_cpu,          // DO, R_W_n, Sync, Enable, DI
 	output     [18:0] dbg_mem_addr,
 	output            dbg_mem_we_n,
 	output      [7:0] dbg_mem_din,
@@ -231,6 +232,7 @@ ElectronFpga_core Electron
 	.avr_RxD(1'b1),
 	.avr_TxD(),
 	.cpu_addr(cpu_addr),
+	.cpu_dbg(dbg_cpu),
 
 	.joystick1_x(adc1_x),
 	.joystick1_y(adc1_y),

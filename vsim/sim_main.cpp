@@ -96,10 +96,45 @@ static const int initial_reset = 64;   // clk_sys cycles
 
 // ------------------------------------------------------------- the clock
 
+// --cpu-trace <frame>[:<n>]: from that field on, keep the last n opcode
+// fetches (PC, opcode) and print them when a BRK (opcode 00) is fetched.
+static int opt_trace_from = -1, opt_trace_n = 4000, trace_brks = 0;
+struct TraceEnt { int frame; uint16_t pc; uint16_t op; };   // op 0x1xx: a write of xx to &FE05
+static std::vector<TraceEnt> trace_ring;
+static size_t trace_pos = 0;
+static int cur_frame() { return video.count_frame; }
+static void cpu_trace_sample() {
+	unsigned d = top->dbg_cpu;
+	if (!((d >> 8) & 1)) return;                         // Enable
+	int fr = cur_frame();
+	if (fr < opt_trace_from) return;
+	bool romsel = !((d >> 10) & 1) && (top->dbg_cpu_addr & 0xFF0F) == 0xFE05;   // a ROM select / IRQ clear write
+	if (!romsel && !((d >> 9) & 1)) return;              // else only opcode fetches (Sync)
+	if (romsel && (getenv("TRACE_ALLSEL") || (((d >> 11) & 0x0F) != 0x08 && ((d >> 11) & 0x0F) != 0x0C)))   // selects other than 8 / 12
+		printf("ROMSEL frame %d pc-ish %04X value %02X\n", fr, trace_ring.empty() ? 0 : trace_ring[(trace_pos + trace_ring.size() - 1) % trace_ring.size()].pc, (d >> 11) & 0xFF);
+	TraceEnt ent = { fr, (uint16_t)top->dbg_cpu_addr, (uint16_t)(romsel ? 0x100 | ((d >> 11) & 0xFF) : (d & 0xFF)) };
+	if (trace_ring.size() < (size_t)opt_trace_n) trace_ring.push_back(ent);
+	else trace_ring[trace_pos] = ent;
+	trace_pos = (trace_pos + 1) % opt_trace_n;
+	static int dump_at = getenv("TRACE_DUMP_AT") ? atoi(getenv("TRACE_DUMP_AT")) : -1;
+	if ((!romsel && (d & 0xFF) == 0 && trace_brks < 3) || (dump_at >= 0 && fr >= dump_at)) {
+		if (dump_at >= 0 && fr >= dump_at) dump_at = -1;
+		trace_brks++;
+		printf("CPUTRACE BRK at %04X frame %d; last %zu fetches:\n", top->dbg_cpu_addr, fr, trace_ring.size());
+		for (size_t i = 0; i < trace_ring.size(); i++) {
+			const TraceEnt &e = trace_ring[(trace_pos + i) % trace_ring.size()];
+			if (e.op & 0x100) printf("CPUTRACE %d %04X W%02X\n", e.frame, e.pc, e.op & 0xFF);
+			else printf("CPUTRACE %d %04X %02X\n", e.frame, e.pc, e.op);
+		}
+		trace_ring.clear(); trace_pos = 0;
+	}
+}
+
 static void tick() {
 	clk_sys.Tick();
 	top->clk_sys = clk_sys.clk;
 	if (clk_sys.clk != clk_sys.old) {
+		if (clk_sys.clk && opt_trace_from >= 0) cpu_trace_sample();
 		if (clk_sys.clk) { input.BeforeEval(); bus.BeforeEval(); }
 		top->eval();
 #if VM_TRACE_VCD
@@ -409,6 +444,10 @@ static int parse_args(int argc, char **argv) {
 		else if (a == "--dump-ram") {
 			if (!split_frame(next(), fr, rest)) { fprintf(stderr, "--dump-ram wants frame:file\n"); return 2; }
 			opt_ram_dumps.push_back({ fr, rest });
+		}
+		else if (a == "--cpu-trace") {
+			std::string v = next(); opt_trace_from = atoi(v.c_str());
+			size_t c = v.find(':'); if (c != std::string::npos) opt_trace_n = atoi(v.c_str() + c + 1);
 		}
 		else if (a == "--peek") {
 			if (!split_frame(next(), fr, rest)) { fprintf(stderr, "--peek wants frame:hexaddr[,hexaddr]\n"); return 2; }
