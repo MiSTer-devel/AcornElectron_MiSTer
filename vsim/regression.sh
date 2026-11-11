@@ -67,6 +67,24 @@ $SIM --headless --autoboot --stop-at-frame 150 --screenshot 150 --screenshot-dir
 $SIM --headless --key-hold 2 --key-gap 2 --send-keys '110:*KEY1?&77=42\n' --send-keys '250:\f1\n' \
 	--peek 450:77 --stop-at-frame 450 > "$OUT/fkey.log" &
 
+# --- 7. tapes (local software/ only; skipped without it) --------------------
+# Boxer: the original gzipped UEF from the STH zip (download -> gunzip ->
+# UEF player) at 8x turbo, CHAIN"" to the title screen. MAD (0xC0DE's Machine
+# Auto Detect, plain UEF) at 8x: prints "Detected: 5" (the MAME timing).
+SW=../software
+TAPES=0
+if [ -f $SW/mister11/tapes/Boxer_E.zip ] && [ -f $SW/free/0xC0DE6502/machine-auto-detect-releases/machine-auto-detect.uef ]; then
+	TAPES=1
+	python3 -I -c "import zipfile,sys; z=zipfile.ZipFile(sys.argv[1]); open(sys.argv[2],'wb').write(z.read('Boxer_E.uef'))" \
+		$SW/mister11/tapes/Boxer_E.zip "$OUT/Boxer_gz.uef"
+	$SIM --headless --key-hold 2 --key-gap 2 --tape "$OUT/Boxer_gz.uef" --tape-frame 100 --tape-turbo 8 \
+		--send-keys '120:*TAPE\nCHAIN""\n' --screenshot 1700 --screenshot-dir "$OUT" \
+		--screenshot-prefix tape_boxer --stop-at-frame 1700 > "$OUT/tape_boxer.log" 2>&1 &
+	$SIM --headless --key-hold 2 --key-gap 2 --tape $SW/free/0xC0DE6502/machine-auto-detect-releases/machine-auto-detect.uef \
+		--tape-frame 100 --tape-turbo 8 --send-keys '120:*TAPE\nCHAIN""\n' --screenshot 700 --screenshot-dir "$OUT" \
+		--screenshot-prefix tape_mad --stop-at-frame 700 > "$OUT/tape_mad.log" 2>&1 &
+fi
+
 # --- 6. OSD CPU speed: a 2000-step FOR loop, centiseconds into &78 --------
 for c in 0 1 2; do
 	$SIM --headless --key-hold 2 --key-gap 2 --cpu-speed $c \
@@ -112,6 +130,12 @@ shot_check() {   # log golden label
 shot_check shift_break 8e7a54ac4af27b7b "SHIFT-BREAK boots (Card?)"
 shot_check autoboot    c3f63c738653f105 "Autoboot boots (Card?)"
 peek_check fkey "2A" "F1 = FUNC+1"
+if [ $TAPES = 1 ]; then
+	shot_check tape_boxer ffb8fb706f11f961 "tape: gzipped Boxer UEF at 8x to title"
+	shot_check tape_mad   8ea90fc274b9c1e5 "tape: MAD UEF at 8x (Detected: 5)"
+else
+	echo "SKIP  tapes (no ../software)"
+fi
 peek_check speed0 "90" "CPU speed Normal (cs)"
 peek_check speed1 "67" "CPU speed 2 MHz (cs)"
 peek_check speed2 "32" "CPU speed 4 MHz (cs)"

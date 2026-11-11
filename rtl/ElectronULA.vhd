@@ -89,6 +89,9 @@ entity ElectronULA is
 
         -- Casette
         casIn     : in  std_logic;
+        -- MiSTer turbo tape: the tape plays N times faster, so the receiver's
+        -- pulse-length counter counts N per clock (thresholds unchanged)
+        tape_speed : in std_logic_vector(4 downto 0) := "00001";
         casOut    : out std_logic;
 
         -- MISC
@@ -641,7 +644,7 @@ begin
                     if (casIn2 = '0') then
                         general_counter <= (others => '0');
                     else
-                        general_counter <= general_counter + 1;
+                        general_counter <= general_counter + tape_speed;   -- MiSTer: N per clock
                     end if;
                 elsif (comms_mode = "01") then
                     -- Sound Mode - Frequency = 1MHz / [16 * (S + 1)]

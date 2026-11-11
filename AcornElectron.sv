@@ -28,8 +28,6 @@ assign USER_OUT = '1;
 assign {UART_RTS, UART_TXD, UART_DTR} = 0;
 assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = 0;
  
-assign LED_USER  = cas_relay| ioctl_download | (vsd_sel & sd_act);
-assign LED_DISK  = {1'b1,~vsd_sel & sd_act};
 assign LED_POWER = 0;
 
 assign VGA_F1    = 0;
@@ -47,7 +45,7 @@ wire [1:0] ar = status[9:8];
 // Status bits kept from the old menu: 3-5 Scandoubler Fx, 8-9 Aspect ratio,
 // 10 Swap joysticks, 12 Tape input, 13 Tape audio, 14 Tape overlay (1 = Off),
 // 15 Rewind tape. New: 16-17 CPU speed, 18 Interlace, 19-20 Scale,
-// 22 BREAK, 23 Ctrl-BREAK, 24 Autoboot (1 = Off), 25 SHIFT-BREAK.
+// 22 BREAK, 23 Ctrl-BREAK, 24 Autoboot (1 = Off), 25 SHIFT-BREAK, 26 Tape speed (1 = Normal).
 `include "build_id.v" 
 parameter CONF_STR = {
 	"AcornElectron;;",
@@ -67,6 +65,7 @@ parameter CONF_STR = {
 	"R0,Apply and reset;",
 
 	"P1O[17:16],CPU speed,Normal,2 MHz,4 MHz;",
+	"P1O[26],Tape speed,8x,Normal;",
 	"P1-;",
 	"P1T[15],Rewind tape;",
 	"P1T[22],BREAK;",
@@ -182,6 +181,17 @@ wire        img_readonly;
 wire [63:0] img_size;
 
 
+// tape (instance further down)
+wire        casdout, cas_relay;
+wire        tape_is_uef, tape_unpacking, tape_error, tape_wait;
+wire [24:0] tape_pos, tape_len;
+wire        tape_turbo = ~status[26] & tape_is_uef & cas_relay;
+localparam [4:0] TAPE_TURBO = 5'd8;
+wire  [4:0] tape_speed = tape_turbo ? TAPE_TURBO : 5'd1;
+
+assign LED_USER  = cas_relay | ioctl_download | tape_unpacking | (vsd_sel & sd_act);
+assign LED_DISK  = {1'b1,~vsd_sel & sd_act};
+
 /////////////////  RESET  /////////////////////////
 
 // Power-on reset: the board's reset, OSD Apply and reset, the USER button, and
@@ -235,6 +245,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.ioctl_wr(ioctl_wr),
 	.ioctl_addr(ioctl_addr),
 	.ioctl_dout(ioctl_dout),
+	.ioctl_wait(tape_wait),
 
 	.sd_lba(sd_lba),
 	.sd_rd(sd_rd),
@@ -406,7 +417,8 @@ ElectronFpga_core Electron
 	.osd_break(osd_break),
 	.osd_ctrl(osd_ctrl),
 	.osd_shift(osd_shift),
-	.cpu_speed(cpu_speed),
+	.cpu_speed(tape_turbo ? 2'b11 : cpu_speed),   // 4 MHz while a turbo load runs
+	.tape_speed(tape_speed),
 
 	.ps2_key(ps2_key),
 
@@ -643,51 +655,84 @@ always @(posedge CLK_50M) begin
 end
 
 
-wire casdout;
-wire cas_relay;
 
 
 
 wire locked;
-wire [24:0] sdram_addr;
-wire [7:0] sdram_data;
-wire sdram_rd;
-wire load_tape = ioctl_index[5:0] == 2;
-reg [24:0] tape_end;
+
+// Tape: download -> (gunzip) -> UEF player or .cas player (rtl/tape.sv).
+// OSD Tape speed (P1): the UEF plays TAPE_TURBO times faster while the
+// motor runs, the ULA's tape receiver counts that much faster, and the CPU
+// runs at 4 MHz to keep up; the machine is back to normal when the motor
+// stops (tape-standard.md).
+wire load_tape = ioctl_download && ioctl_index[5:0] == 2;
+wire        tmem_req, tmem_we;
+wire [24:0] tmem_addr;
+wire  [7:0] tmem_din;
+reg         tmem_ack = 0;
+reg   [7:0] tmem_dout;
+
+tape #(.CLK_HZ(16000000)) tape
+(
+	.clk(clk_sys),
+	.reset(reset),
+	.load(load_tape),
+	.ioctl_wr(ioctl_wr),
+	.ioctl_addr(ioctl_addr),
+	.ioctl_dout(ioctl_dout),
+	.ioctl_wait(tape_wait),
+	.rewind(status[15]),
+	.motor(cas_relay),
+	.speed(tape_speed),
+	.mem_req(tmem_req),
+	.mem_we(tmem_we),
+	.mem_addr(tmem_addr),
+	.mem_din(tmem_din),
+	.mem_ack(tmem_ack),
+	.mem_dout(tmem_dout),
+	.cas_out(casdout),
+	.is_uef(tape_is_uef),
+	.unpacking(tape_unpacking),
+	.error(tape_error),
+	.position(tape_pos),
+	.length(tape_len)
+);
+
+// byte requests -> sdram.sv (edge-triggered rd/we, `ready` when done)
+wire [15:0] sdram_dout;
+wire        sdram_ready;
+reg         sdr_we = 0, sdr_rd = 0, sdr_busy = 0;
+reg  [24:0] sdr_addr;
+reg   [7:0] sdr_din;
+reg   [2:0] sdr_wait;
+
+always @(posedge clk_sys) begin
+	tmem_ack <= 0;
+	sdr_we <= 0;
+	sdr_rd <= 0;
+	if (!sdr_busy) begin
+		if (tmem_req && !tmem_ack) begin
+			sdr_addr <= tmem_addr; sdr_din <= tmem_din;
+			sdr_we <= tmem_we; sdr_rd <= ~tmem_we;
+			sdr_wait <= 3'd3; sdr_busy <= 1;
+		end
+	end
+	else if (sdr_wait) sdr_wait <= sdr_wait - 1'd1;
+	else if (sdram_ready) begin tmem_ack <= 1; tmem_dout <= sdram_dout[7:0]; sdr_busy <= 0; end
+end
 
 sdram sdram
 (
 	.*,
 	.init(~locked),
 	.clk(clk_sys),
-	.addr(ioctl_download ? ioctl_addr : sdram_addr),
+	.addr(sdr_addr),
 	.wtbt(0),
-	.dout(sdram_data),
-	.din(ioctl_dout),
-	.rd(sdram_rd),
-	.we(ioctl_wr & load_tape),
-	.ready()
-);
-
-
-
-always @(posedge clk_sys) begin
- // hps_io (7768007+) leaves ioctl_addr = file size after a download; keep tape_end = last byte
- if (load_tape) tape_end <= ioctl_addr - 1'd1;
-end
-
-cassette cassette(
-  .clk(clk_sys),
-
-  .rewind(status[15] | (load_tape&ioctl_download)),
-  .en(cas_relay),
-  .sdram_addr(sdram_addr),
-  .sdram_data(sdram_data),
-  .sdram_rd(sdram_rd),
-
-  .tape_end(tape_end),
-  .data(casdout)
-//   .status(tape_status)
+	.dout(sdram_dout),
+	.din({8'h00, sdr_din}),
+	.rd(sdr_rd),
+	.we(sdr_we),
+	.ready(sdram_ready)
 );
 
 wire [10:0] h_cnt;
@@ -715,9 +760,9 @@ overlay  #( .RGB(24'hFFFFFF) ) overlay
 	.o_g(o_g),
 	.o_b(o_b),
 	
-	.pos(sdram_addr),
-	.max(tape_end),
-	.tape_data(sdram_data),
+	.pos(tape_pos),
+	.max(tape_len),
+	.tape_data(tmem_dout),
 
 	
 	.ena(cas_relay & show_cas_overlay)

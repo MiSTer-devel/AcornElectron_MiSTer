@@ -105,6 +105,8 @@ entity ElectronFpga_core is
 		  osd_break     : in std_logic := '0';
 		  osd_ctrl      : in std_logic := '0';
 		  osd_shift     : in std_logic := '0';
+		  -- turbo tape: the tape plays N times faster (1 = real time)
+		  tape_speed    : in std_logic_vector(4 downto 0) := "00001";
 		  h_cnt: out std_logic_vector(10  downto 0);
 		  v_cnt: out std_logic_vector( 9  downto 0)
 
@@ -215,6 +217,7 @@ begin
 
         -- Casette
         casIn     => cassette_in,
+        tape_speed => tape_speed,
         casOut    => cassette_out,
 
         -- Keyboard

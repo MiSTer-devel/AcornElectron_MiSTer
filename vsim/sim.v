@@ -12,7 +12,7 @@
 //  Deliberate differences from AcornElectron.sv:
 //    * one 16 MHz clock (clk_sys = clk_16). vid_mode 00/01 only use that;
 //      the 24/32/33/40 MHz inputs are tied low (Mode 7 / SVGA are off).
-//    * the tape buffer is a behavioural 2 MB array instead of SDRAM
+//    * the tape memory is a behavioural 4 MB array instead of SDRAM
 //    * no cassette overlay (it runs on clk_64), no ADC tape input
 //    * no SD card yet: SDMISO idles high, MMFS sees no card
 //    * CE_PIXEL is every clk_sys: the ULA's pixel clock is 16 MHz
@@ -36,6 +36,8 @@ module emu (
 	input             autoboot,         // OSD status[24] Autoboot (On = 1 here)
 	input             tape_rewind,      // OSD status[15] Rewind tape
 	input             tape_monitor,     // OSD status[13]
+	input             tape_fast,        // OSD Tape speed: Nx (status[26] = 0)
+	input       [4:0] tape_turbo_n,     // N (AcornElectron.sv: TAPE_TURBO)
 
 	// HPS file transfer: index 0 = ROM (resets the machine), 2 = tape
 	input             ioctl_download,
@@ -68,7 +70,6 @@ module emu (
 	output     [24:0] dbg_tape_end
 );
 
-assign ioctl_wait = 1'b0;
 
 // ------------------------------------------------------------------- reset
 // As AcornElectron.sv: a ROM download is a power-on reset; settings latch at reset.
@@ -190,7 +191,8 @@ ElectronFpga_core Electron
 	.osd_break(osd_break),
 	.osd_ctrl(osd_ctrl),
 	.osd_shift(osd_shift),
-	.cpu_speed(cpu_speed),
+	.cpu_speed(tape_turbo ? 2'b11 : cpu_speed),
+	.tape_speed(tape_speed),
 	.ps2_key(ps2_key),
 
 	.video_cepix(ce_pix),
@@ -260,34 +262,59 @@ assign AUDIO_L = sound_pad;
 assign AUDIO_R = {16{audio_snr}};
 
 // -------------------------------------------------------------------- tape
-// AcornElectron.sv buffers the tape in SDRAM; a 2 MB array stands in here.
+// The same rtl/tape.sv as AcornElectron.sv; a 4 MB array with an SDRAM-like
+// delay stands in for the SDRAM (download at 0, gunzipped data at 8 MB).
 
-wire        load_tape = ioctl_index[5:0] == 2;
-wire [24:0] sdram_addr;
-wire        sdram_rd;
-reg   [7:0] sdram_data;
-reg  [24:0] tape_end;
-reg   [7:0] tape_mem[0:2097151];
+wire        load_tape = ioctl_download && ioctl_index[5:0] == 2;
+wire        tmem_req, tmem_we;
+wire [24:0] tmem_addr;
+wire  [7:0] tmem_din;
+reg         tmem_ack = 0;
+reg   [7:0] tmem_dout;
+wire        tape_is_uef, tape_unpacking, tape_error;
+wire [24:0] tape_pos, tape_len;
+wire        tape_turbo = tape_fast & tape_is_uef & cas_relay;
+wire  [4:0] tape_speed = tape_turbo ? tape_turbo_n : 5'd1;
+reg   [7:0] tape_mem[0:4194303];
+reg   [2:0] tmem_delay = 0;
 
 always @(posedge clk_sys) begin
-	if (ioctl_download && ioctl_wr && load_tape) tape_mem[ioctl_addr[20:0]] <= ioctl_dout;
-	sdram_data <= tape_mem[sdram_addr[20:0]];
+	tmem_ack <= 0;
+	if (tmem_req && !tmem_ack) begin
+		if (tmem_delay == 3'd6) begin
+			if (tmem_we) tape_mem[{tmem_addr[23], tmem_addr[20:0]}] <= tmem_din;
+			tmem_dout <= tape_mem[{tmem_addr[23], tmem_addr[20:0]}];
+			tmem_ack <= 1;
+			tmem_delay <= 0;
+		end
+		else tmem_delay <= tmem_delay + 1'd1;
+	end
 end
 
-// As AcornElectron.sv: hps_io leaves ioctl_addr = file size after a download
-always @(posedge clk_sys) if (load_tape) tape_end <= ioctl_addr - 1'd1;
-
-cassette cassette
+tape #(.CLK_HZ(16000000)) tape
 (
 	.clk(clk_sys),
-	.rewind(tape_rewind | (load_tape & ioctl_download)),
-	.en(cas_relay),
-	.sdram_addr(sdram_addr),
-	.sdram_data(sdram_data),
-	.sdram_rd(sdram_rd),
-	.tape_end(tape_end),
-	.data(casdout),
-	.status()
+	.reset(reset),
+	.load(load_tape),
+	.ioctl_wr(ioctl_wr),
+	.ioctl_addr(ioctl_addr),
+	.ioctl_dout(ioctl_dout),
+	.ioctl_wait(ioctl_wait),
+	.rewind(tape_rewind),
+	.motor(cas_relay),
+	.speed(tape_speed),
+	.mem_req(tmem_req),
+	.mem_we(tmem_we),
+	.mem_addr(tmem_addr),
+	.mem_din(tmem_din),
+	.mem_ack(tmem_ack),
+	.mem_dout(tmem_dout),
+	.cas_out(casdout),
+	.is_uef(tape_is_uef),
+	.unpacking(tape_unpacking),
+	.error(tape_error),
+	.position(tape_pos),
+	.length(tape_len)
 );
 
 // ------------------------------------------------------------------- debug
@@ -298,8 +325,8 @@ assign dbg_mem_we_n  = mem_we_n;
 assign dbg_mem_din   = mem_din;
 assign dbg_cas_relay = cas_relay;
 assign dbg_casdout   = casdout;
-assign dbg_tape_addr = sdram_addr;
-assign dbg_tape_end  = tape_end;
+assign dbg_tape_addr = tape_pos;
+assign dbg_tape_end  = tape_len;
 
 endmodule
 

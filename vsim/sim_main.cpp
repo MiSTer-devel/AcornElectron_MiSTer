@@ -87,6 +87,7 @@ static std::vector<std::pair<int, std::string>> opt_peeks;   // frame, "addr[,ad
 static int reset_hold = 0;
 static int pulse_cycles = 0;
 static int osd_pulse_cycles = 0;
+static bool rom_pending = false;   // --rom queued, download not started yet
 static std::vector<int> opt_osd_break, opt_osd_ctrl_break, opt_osd_shift_break;
 static bool last_relay = false;
 static unsigned joy_mask[2] = { 0, 0 };
@@ -129,7 +130,9 @@ static inline void step() {
 
 	// Reset: power-on, --reset-at-frame, and held until a queued ROM image
 	// starts loading (the download itself resets the machine, as on MiSTer).
-	bool rom_queued = bus.HasQueue();
+	// only a queued ROM (index 0) holds reset; a tape download must not
+	if (rom_pending && top->ioctl_download && top->ioctl_index == 0) rom_pending = false;
+	bool rom_queued = rom_pending;
 	if (reset_hold > 0) reset_hold--;
 	top->reset_in = (main_time < (vluint64_t)initial_reset) || reset_hold > 0 || rom_queued;
 	if (osd_pulse_cycles > 0 && --osd_pulse_cycles == 0) { top->btn_break = 0; top->btn_ctrl_break = 0; top->btn_shift_break = 0; }
@@ -272,8 +275,8 @@ static bool on_frame(int frame) {
 		if (a.stick == 0) top->joystick_l_analog_0 = v; else top->joystick_l_analog_1 = v;
 	}
 	if (top->dbg_cas_relay != last_relay) {
-		printf("FRAME %d: MOTOR %s (tape addr %u of %u)\n", frame, top->dbg_cas_relay ? "on" : "off",
-		       top->dbg_tape_addr, top->dbg_tape_end + 1);
+		printf("FRAME %d: MOTOR %s (tape position %u of %u)\n", frame, top->dbg_cas_relay ? "on" : "off",
+		       top->dbg_tape_addr, top->dbg_tape_end);
 		last_relay = top->dbg_cas_relay;
 	}
 	for (auto &d : opt_ram_dumps) if (d.first == frame) {
@@ -333,7 +336,8 @@ static void usage() {
 	printf("  --tape <file>                 Load a tape (OSD F2) at --tape-frame (default 0)\n");
 	printf("  --tape-frame <n>\n");
 	printf("  --tape-rewind <n>             OSD Stop & Rewind at field n. Repeatable\n");
-	printf("  --tape-monitor                OSD Monitor Tape Sound: Yes\n");
+	printf("  --tape-monitor                OSD Tape audio: On\n");
+	printf("  --tape-turbo <n>              OSD Tape speed: n x (UEF only; default Normal)\n");
 	printf("  --reset-at-frame <n>          Pulse reset at field n. Repeatable\n");
 	printf("  --dump-ram <frame>:<file>     Save the 32 KB main RAM. Repeatable\n");
 	printf("  --peek <frame>:<hex[,hex]>    Print main RAM bytes at a field. Repeatable\n");
@@ -400,6 +404,7 @@ static int parse_args(int argc, char **argv) {
 		else if (a == "--tape-frame") opt_tape_frame = atoi(next().c_str());
 		else if (a == "--tape-rewind") opt_tape_rewind.push_back(atoi(next().c_str()));
 		else if (a == "--tape-monitor") top->tape_monitor = 1;
+		else if (a == "--tape-turbo") { top->tape_fast = 1; top->tape_turbo_n = atoi(next().c_str()) & 31; }
 		else if (a == "--reset-at-frame") opt_reset_frames.push_back(atoi(next().c_str()));
 		else if (a == "--dump-ram") {
 			if (!split_frame(next(), fr, rest)) { fprintf(stderr, "--dump-ram wants frame:file\n"); return 2; }
@@ -441,7 +446,7 @@ int main(int argc, char **argv) {
 	bus.ioctl_dout = &top->ioctl_dout;
 	input.ps2_key = &top->ps2_key;
 
-	if (!opt_rom.empty()) bus.QueueDownload(opt_rom, 0, true);
+	if (!opt_rom.empty()) { bus.QueueDownload(opt_rom, 0, true); rom_pending = true; }
 
 	if (video.Initialise("Verilator Sim: Acorn Electron") == 1) return 1;
 	if (!headless) {

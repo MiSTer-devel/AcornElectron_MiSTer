@@ -13,4 +13,7 @@ set_global_assignment -name VERILOG_FILE rtl/cassette.v
 set_global_assignment -name VERILOG_FILE rtl/square_gen.v
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/electron_input.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/inflate.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/uef_player.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/tape.sv
 set_global_assignment -name SYSTEMVERILOG_FILE AcornElectron.sv
