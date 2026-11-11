@@ -49,6 +49,7 @@ entity ElectronFpga_core is
 		  video_hblank   : out std_logic;
 		  video_vblank   : out std_logic;
         video_mode7    : out std_logic;   -- Mode 7 picture: 12 MHz pixels (clk_24M00 domain RGB)
+        video_field    : out std_logic;   -- interlace field (VGA_F1)
         -- Audio
         audio_l        : out std_logic;
         audio_r        : out std_logic;
@@ -212,6 +213,7 @@ begin
 		  hblank		=> video_hblank,
 		  vblank		=> video_vblank,
         mode7     => video_mode7,
+        vfield    => video_field,
 
         -- Audio
         sound     => sound,

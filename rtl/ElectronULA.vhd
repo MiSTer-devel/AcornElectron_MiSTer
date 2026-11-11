@@ -77,6 +77,7 @@ entity ElectronULA is
         hblank    : out std_logic;
         vblank    : out std_logic;
         mode7     : out std_logic;   -- MiSTer: the Mode 7 picture is shown (12 MHz pixels, clk_24M00)
+        vfield    : out std_logic;   -- MiSTer: interlace field of the picture shown (0 when progressive)
 
         -- Audio
         sound     : out std_logic;
@@ -294,6 +295,7 @@ architecture behavioral of ElectronULA is
   signal ttxt_de        :   std_logic;
   signal ttxt_hde       :   std_logic;
   signal crtc_hde       :   std_logic;
+  signal crtc_field     :   std_logic;
 
   -- internal signals to generate the video clock
   signal clk_16M00_a    :   std_logic;
@@ -1254,6 +1256,8 @@ begin
     hblank <= not ttxt_hde when mode7_enable = '1' else hblank_int;
     vblank <= not crtc_vde when mode7_enable = '1' else vblank_int;
     mode7  <= mode7_enable;
+    -- so the scaler weaves the two fields into one steady picture
+    vfield <= crtc_field when mode7_enable = '1' else field;
 
     h_cnt <= h_count;
     v_cnt <= v_count;
@@ -1568,6 +1572,7 @@ begin
             DE     => crtc_de,
             VDE    => crtc_vde,
             HDE    => crtc_hde,
+            FIELD  => crtc_field,
             CURSOR => crtc_cursor,
             MA     => crtc_ma,
             RA     => crtc_ra
@@ -1622,6 +1627,7 @@ begin
         crtc_vde     <= '0';
         ttxt_de      <= '0';
         ttxt_hde     <= '0';
+        crtc_field   <= '0';
         ttxt_r       <= '0';
         ttxt_g       <= '0';
         ttxt_b       <= '0';

@@ -30,7 +30,10 @@ assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DD
  
 assign LED_POWER = 0;
 
-assign VGA_F1    = 0;
+// VGA_F1: the interlace field (Mode 7, or Video: Interlace On), so the
+// scaler weaves both fields into one picture instead of bobbing each
+wire   vid_field;
+assign VGA_F1    = vid_field;
 assign BUTTONS = 0;
 
 assign VGA_DISABLE = 0;
@@ -363,6 +366,7 @@ ElectronFpga_core Electron
 	.video_vblank(vblank),
 	.video_hblank(hblank),
 	.video_mode7(mode7),
+	.video_field(vid_field),
 
 	.video_vsync(vs),
 	.video_hsync(hs),

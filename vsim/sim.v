@@ -211,6 +211,7 @@ ElectronFpga_core Electron
 	.video_vsync(vs),
 	.video_hsync(hs),
 	.video_mode7(mode7),
+	.video_field(),
 
 	.audio_l(audio_snl),
 	.audio_r(audio_snr),

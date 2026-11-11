@@ -72,6 +72,7 @@ port (
 	DE			:	out	std_logic;
 	VDE			:	out	std_logic;	-- MiSTer: vertical display enable (for the video blanking)
 	HDE			:	out	std_logic;	-- MiSTer: horizontal display enable, skewed as DE, on every line
+	FIELD		:	out	std_logic;	-- MiSTer: odd field (interlace), for the scaler's field flag
 	CURSOR		:	out	std_logic;
 	LPSTB		:	in	std_logic;
 
@@ -154,6 +155,7 @@ begin
 
 	de0 <= h_display and v_display;
 	VDE <= v_display;
+	FIELD <= odd_field;
 
     -- In Mode 7 DE Delay is set to 01, but in our implementation no delay is needed
     -- TODO: Fix SAA5050
