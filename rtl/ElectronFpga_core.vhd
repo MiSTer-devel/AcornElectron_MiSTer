@@ -321,7 +321,9 @@ begin
             cpu_clken_r <= cpu_clken;
             if cpu_a(15) = '0' then
                 -- exteral main memory access
-                ext_A <= "1" & "000" & cpu_a(14 downto 0);
+                -- MiSTer: at RAM slots 8-9 (unused: ROMs 8-11 are the ULA's),
+                -- not 0-1, where it hid the Plus 1 cartridge ROMs 0/1
+                ext_A <= "1" & "100" & cpu_a(14 downto 0);
 					 
             elsif cpu_a(15 downto 14) = "11" then
                  -- The OS rom image lives in slot 8 as on the Elk this is where the

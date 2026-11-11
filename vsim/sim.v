@@ -77,7 +77,8 @@ module emu (
 // ------------------------------------------------------------------- reset
 // As AcornElectron.sv: a ROM download is a power-on reset; settings latch at reset.
 wire rom_download = ioctl_download && ioctl_index == 0;
-wire reset = reset_in | rom_download;
+wire [1:0] cart_download = {ioctl_download && ioctl_index == 4, ioctl_download && ioctl_index == 3};   // Cartridge 1 / 2
+wire reset = reset_in | rom_download | (|cart_download);
 
 reg       cfg_interlace;
 reg [1:0] cfg_speed;
@@ -99,60 +100,42 @@ electron_osd_buttons osd_buttons
 );
 
 // ------------------------------------------------------------------ memory
-// Same map as AcornElectron.sv. ext_A[18] = 1: sideways RAM, else ROM.
+// The same map as AcornElectron.sv (rtl/electron_mem.sv).
 
 wire        mem_we_n;
 wire [18:0] mem_addr;
-wire  [7:0] mem_din;
-reg  [16:0] rom_addr;
-reg  [16:0] ram_addr;
-reg   [7:0] rom_data, ram_data;
-wire  [7:0] rom_dout, ram_dout;
+wire  [7:0] mem_din, mem_dout;
+wire [16:0] rom_a, ram_a;
+wire        rom_we, ram_we;
+wire  [7:0] rom_d, ram_d, rom_q, ram_q;
 
-always @(*) begin
-	rom_addr[13:0] = mem_addr[13:0];
-	case (mem_addr[18:14])
-		5'b0_01_00: rom_addr[16:14] = 0; // mmfs_swram.rom
-		5'b0_10_00: rom_addr[16:14] = 1; // os100.rom
-		5'b0_10_01: rom_addr[16:14] = 1;
-		5'b0_10_10: rom_addr[16:14] = 2; // Basic2.rom
-		5'b0_10_11: rom_addr[16:14] = 2;
-		5'b0_11_00: rom_addr[16:14] = 3; // pres_ap2_v1_23.rom
-		5'b0_11_01: rom_addr[16:14] = 4;
-		5'b0_11_10: rom_addr[16:14] = 5;
-		5'b0_11_11: rom_addr[16:14] = 6; // M7_191.rom
-		default:    rom_addr[16:14] = 0;
-	endcase
-	case (mem_addr[18:14])
-		5'b0_01_00, 5'b0_10_00, 5'b0_10_01, 5'b0_10_10, 5'b0_10_11,
-		5'b0_11_00, 5'b0_11_01, 5'b0_11_10, 5'b0_11_11: rom_data = rom_dout;
-		default: rom_data = 8'h00;
-	endcase
-	ram_addr[13:0] = mem_addr[13:0];
-	ram_addr[16:14] = mem_addr[16:14];          // slots 0-7 (b1_0x_xx)
-	ram_data = (mem_addr[18:17] == 2'b10) ? ram_dout : 8'h00;
-end
+electron_mem electron_mem
+(
+	.clk(clk_sys),
+	.mem_addr(mem_addr), .mem_we_n(mem_we_n), .mem_din(mem_din), .mem_dout(mem_dout),
+	.rom_download(rom_download), .cart_download(cart_download),
+	.ioctl_wr(ioctl_wr), .ioctl_addr(ioctl_addr), .ioctl_dout(ioctl_dout),
+	.rom_a(rom_a), .rom_we(rom_we), .rom_d(rom_d), .rom_q(rom_q),
+	.ram_a(ram_a), .ram_we(ram_we), .ram_d(ram_d), .ram_q(ram_q)
+);
 
 // 112 KB ROM image, written by an ioctl index 0 download
 sim_spram #(8, 17, 114688, "ELK.hex") rom
 (
 	.clock(clk_sys),
-	.address(rom_download ? ioctl_addr[16:0] : rom_addr),
-	.data(ioctl_dout),
-	.wren(rom_download && ioctl_wr),
-	.q(rom_dout)
+	.address(rom_a),
+	.data(rom_d),
+	.wren(rom_we),
+	.q(rom_q)
 );
-
-reg old_we;
-always @(posedge clk_sys) old_we <= mem_we_n;
 
 sim_spram #(8, 17, 131072, "") ram
 (
 	.clock(clk_sys),
-	.address(ram_addr),
-	.data(mem_din),
-	.wren(mem_addr[18] & old_we & ~mem_we_n),
-	.q(ram_dout)
+	.address(ram_a),
+	.data(ram_d),
+	.wren(ram_we),
+	.q(ram_q)
 );
 
 // --------------------------------------------------------------- joysticks
@@ -214,7 +197,7 @@ ElectronFpga_core Electron
 	.ext_nWE(mem_we_n),
 	.ext_nCS(),
 	.ext_A(mem_addr),
-	.ext_Dout(mem_addr[18] ? ram_data : rom_data),
+	.ext_Dout(mem_dout),
 	.ext_Din(mem_din),
 
 	.SDMISO(1'b1),

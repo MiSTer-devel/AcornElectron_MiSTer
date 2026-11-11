@@ -67,6 +67,16 @@ $SIM --headless --autoboot --stop-at-frame 150 --screenshot 150 --screenshot-dir
 $SIM --headless --key-hold 2 --key-gap 2 --send-keys '110:*KEY1?&77=42\n' --send-keys '250:\f1\n' \
 	--peek 450:77 --stop-at-frame 450 > "$OUT/fkey.log" &
 
+# --- 5b. Plus 1 cartridges (OSD Cartridge 1 / 2): Cartridge 2 = BASIC (16 KB)
+# fills ROM 0, Cartridge 1 = 16 KB of zeros + BASIC (32 KB) fills ROM 3 (ROM 2
+# empty). OSRDRM (&FFB9) reads &8009 of ROMs 0-3 into &70-&73: 'B' = &42 where
+# BASIC is, 0 where no cartridge is (main RAM no longer shows through 0/1).
+python3 -I -c "import sys; b=open(sys.argv[1],'rb').read(); open(sys.argv[2],'wb').write(b); open(sys.argv[3],'wb').write(bytes(16384)+b)" \
+	../roms/Basic2.rom "$OUT/cart_lo.rom" "$OUT/cart_hi.rom"
+$SIM --headless --key-hold 2 --key-gap 2 --cart2 "$OUT/cart_lo.rom" --cart1 "$OUT/cart_hi.rom" \
+	--send-keys '110:?&F6=9:?&F7=&80:FORI%=0TO3:Y%=I%:?(&70+I%)=USR(&FFB9):NEXT\n' \
+	--peek 400:70,71,72,73 --stop-at-frame 400 > "$OUT/cart.log" 2>&1 &
+
 # --- 7. tapes (local software/ only; skipped without it) --------------------
 # Boxer as the core gets it on MiSTer: Main_MiSTer converts .uef files to a
 # bit stream for this core (tools/main_uef2bits.py does the same), played
@@ -153,6 +163,7 @@ shot_check() {   # log golden label
 shot_check shift_break 8e7a54ac4af27b7b "SHIFT-BREAK boots (Card?)"
 shot_check autoboot    c3f63c738653f105 "Autoboot boots (Card?)"
 peek_check fkey "2A" "F1 = FUNC+1"
+peek_check cart "42 00 00 42" "cartridges: ROM 0 = Cartridge 2, ROM 3 = Cartridge 1 upper 16 KB"
 if [ $TAPES = 1 ]; then
 	shot_check tape_boxer_main ffb8fb706f11f961 "tape: Boxer as Main sends it (bit stream) at 8x to title"
 	shot_check tape_boxer ffb8fb706f11f961 "tape: gzipped Boxer UEF (core gunzip) at 8x to title"

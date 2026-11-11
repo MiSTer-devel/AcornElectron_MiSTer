@@ -53,6 +53,8 @@ parameter CONF_STR = {
 	"SC0,VHD,Pri. disk (MMB);",
 	"H1F2,UEFCAS,Tape;",
 	"h1-;",
+	"F3,ROMBIN,Cartridge 1;",
+	"F4,ROMBIN,Cartridge 2;",
 	"F0,ROM,Load ROM;",
 	"-;",
 	"P1,Machine;",
@@ -202,7 +204,9 @@ assign LED_DISK  = {1'b1,~vsd_sel & sd_act};
 // a ROM download (Load ROM / boot.rom). The ULA's power-on flag is set again,
 // so the MOS does a cold start. BREAK and Ctrl-BREAK are OSD buttons (P1).
 wire rom_download = ioctl_download && ioctl_index == 0;
-wire reset = RESET | status[0] | buttons[1] | rom_download;
+// OSD Cartridge 1 (index 3: ROMs 2/3) / Cartridge 2 (index 4: ROMs 0/1)
+wire [1:0] cart_download = {ioctl_download && ioctl_index == 4, ioctl_download && ioctl_index == 3};
+wire reset = RESET | status[0] | buttons[1] | rom_download | (|cart_download);
 
 // The settings the machine runs with, taken from the OSD at every reset
 // (osd-standard.md). Video scaling, input and tape monitor rows act at once
@@ -274,121 +278,44 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 
 ////////////////  MEMORY  /////////////////////////
 
-//reg m128 = 0;
-//always @(posedge clk_sys) if(reset_req) m128 <= status[4];
-
-// ELK ROM Images
-
-// The first 8 are sideways rams
-
-// 00 00xx empty     
-// 00 01xx empty     
-// 00 10xx empty     
-// 00 11xx empty     
-// 01 00xx mmfs_swram.rom         
-// 01 01xx empty     
-// 01 10xx empty     
-// 01 11xx empty     
-// 10 00xx os100.rom      
-// 10 01xx os100.rom     
-// 10 10xx Basic2.rom      
-// 10 11xx Basic2.rom      
-// 11 00xx pres_ap2_v1_23.rom     
-// 11 01xx empty     
-// 11 10xx empty
-// 11 11xx M7_191.rom    
-
-always_comb begin
-	rom_addr[13:0] = mem_addr[13:0];
-	case({mem_addr[18:14]})
-		'b0_01_00: rom_addr[16:14] =  0; //mmfs_swram.rom        
-		'b0_10_00: rom_addr[16:14] =  1; //os100.rom     
-		'b0_10_01: rom_addr[16:14] =  1; //os100.rom 
-		'b0_10_10: rom_addr[16:14] =  2; //Basic2.rom 
-		'b0_10_11: rom_addr[16:14] =  2; //Basic2.rom 
-		'b0_11_00: rom_addr[16:14] =  3; //pres_ap2_v1_23.rom      
-		'b0_11_01: rom_addr[16:14] =  4; //empty  for future use   
-		'b0_11_10: rom_addr[16:14] =  5; //empty  for future use     
-		'b0_11_11: rom_addr[16:14] =  6; //M7_191.rom          
-		  default: rom_addr[16:14] =  0;
-	endcase
-end
-
-always_comb begin
-	case({mem_addr[18:14]})
-		'b0_01_00,
-		'b0_10_00,
-		'b0_10_01,
-		'b0_10_10,
-		'b0_10_11,
-		'b0_11_00,
-		'b0_11_01,
-		'b0_11_10,
-		'b0_11_11: rom_data = rom_dout;
-		  default: rom_data = 0;
-	endcase
-end
+// The memory map is rtl/electron_mem.sv (shared with vsim/sim.v): the
+// 112 KB ROM image (Load ROM), and RAM for the Plus 1 cartridge ROMs 0-3
+// (Cartridge 1 / 2), MMFS's workspace and main RAM.
 
 wire        mem_we_n;
 wire [18:0] mem_addr;
-wire  [7:0] mem_din;
-wire  [7:0] ram_dout;
-reg  [7:0] ram_data;
+wire  [7:0] mem_din, mem_dout;
+wire [16:0] rom_a, ram_a;
+wire        rom_we, ram_we;
+wire  [7:0] rom_d, ram_d, rom_q, ram_q;
 
-reg  [17:0] ram_addr;
-reg  [16:0] rom_addr;
-wire  [7:0] rom_dout;
-reg   [7:0] rom_data;
+electron_mem electron_mem
+(
+	.clk(clk_sys),
+	.mem_addr(mem_addr), .mem_we_n(mem_we_n), .mem_din(mem_din), .mem_dout(mem_dout),
+	.rom_download(rom_download), .cart_download(cart_download),
+	.ioctl_wr(ioctl_wr), .ioctl_addr(ioctl_addr), .ioctl_dout(ioctl_dout),
+	.rom_a(rom_a), .rom_we(rom_we), .rom_d(rom_d), .rom_q(rom_q),
+	.ram_a(ram_a), .ram_we(ram_we), .ram_d(ram_d), .ram_q(ram_q)
+);
 
 spram #(8, 17, 114688, "roms/ELK.mif") rom
 (
 	.clock(clk_sys),
-	.address(rom_download ? ioctl_addr[16:0] : rom_addr),
-	.data(ioctl_dout),
-	.wren(rom_download && ioctl_wr),
-	.q(rom_dout)
+	.address(rom_a),
+	.data(rom_d),
+	.wren(rom_we),
+	.q(rom_q)
 );
-
-always_comb begin
-	ram_addr[13:0] = mem_addr[13:0];
-	case({mem_addr[18:14]})
-		'b1_00_00: ram_addr[16:14] =  0; //swram        
-		'b1_00_01: ram_addr[16:14] =  1; //swram     
-		'b1_00_10: ram_addr[16:14] =  2; //swram 
-		'b1_00_11: ram_addr[16:14] =  3; //swram 
-		'b1_01_00: ram_addr[16:14] =  4; //mmfs_swram.ram 
-		'b1_01_01: ram_addr[16:14] =  5; //swram     
-		'b1_01_10: ram_addr[16:14] =  6; //swram   
-		'b1_01_11: ram_addr[16:14] =  7; //swram           
-		  default: ram_addr[16:14] =  0;
-	endcase
-end
-
-always_comb begin
-	case({mem_addr[18:14]})
-		'b1_00_00,
-		'b1_00_01,
-		'b1_00_10,
-		'b1_00_11,
-		'b1_01_00,
-		'b1_01_01,
-		'b1_01_10,
-		'b1_01_11: ram_data = ram_dout;
-		  default: ram_data = 0;
-	endcase
-end
 
 spram #(8, 17, 131072) ram
 (
 	.clock(clk_sys),
-	.address(ram_addr),
-	.data(mem_din),
-	.wren(mem_addr[18] & old_we & ~mem_we_n),
-	.q(ram_dout)
+	.address(ram_a),
+	.data(ram_d),
+	.wren(ram_we),
+	.q(ram_q)
 );
-
-reg old_we;
-always @(posedge clk_sys) old_we <= mem_we_n;
 
 ///////////////////////////////////////////////////
 
@@ -445,7 +372,7 @@ ElectronFpga_core Electron
 	.ext_nOE(),
 	.ext_nWE(mem_we_n),
 	.ext_A(mem_addr),
-	.ext_Dout(mem_addr[18] ? ram_data : rom_data),
+	.ext_Dout(mem_dout),
 	.ext_Din(mem_din),
 
 	.SDMISO(sdmiso),

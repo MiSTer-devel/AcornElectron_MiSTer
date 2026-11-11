@@ -79,7 +79,7 @@ static int opt_screenshot_every = 0;
 static std::string opt_screenshot_dir = ".", opt_screenshot_prefix = "frame";
 static bool opt_hash = false;
 static std::vector<int> opt_reset_frames;
-static std::string opt_rom, opt_tape;
+static std::string opt_rom, opt_tape, opt_cart[2];
 static int opt_tape_frame = 0;
 static std::vector<int> opt_tape_rewind;
 static std::vector<std::pair<int, std::string>> opt_ram_dumps;
@@ -87,7 +87,7 @@ static std::vector<std::pair<int, std::string>> opt_peeks;   // frame, "addr[,ad
 static int reset_hold = 0;
 static int pulse_cycles = 0;
 static int osd_pulse_cycles = 0;
-static bool rom_pending = false;   // --rom queued, download not started yet
+static int rom_pending = 0;   // --rom / --cart1 / --cart2 queued, downloads not all started yet
 static std::vector<int> opt_osd_break, opt_osd_ctrl_break, opt_osd_shift_break;
 static bool last_relay = false;
 static unsigned joy_mask[2] = { 0, 0 };
@@ -166,8 +166,13 @@ static inline void step() {
 	// Reset: power-on, --reset-at-frame, and held until a queued ROM image
 	// starts loading (the download itself resets the machine, as on MiSTer).
 	// only a queued ROM (index 0) holds reset; a tape download must not
-	if (rom_pending && top->ioctl_download && top->ioctl_index == 0) rom_pending = false;
-	bool rom_queued = rom_pending;
+	{   // a queued ROM / cartridge download holds reset until the last one has started
+		static int last_index = -1;
+		if (rom_pending && top->ioctl_download && top->ioctl_index != last_index &&
+		    (top->ioctl_index == 0 || top->ioctl_index == 3 || top->ioctl_index == 4)) { last_index = top->ioctl_index; rom_pending--; }
+		if (!top->ioctl_download) last_index = -1;
+	}
+	bool rom_queued = rom_pending > 0;
 	if (reset_hold > 0) reset_hold--;
 	top->reset_in = (main_time < (vluint64_t)initial_reset) || reset_hold > 0 || rom_queued;
 	if (osd_pulse_cycles > 0 && --osd_pulse_cycles == 0) { top->btn_break = 0; top->btn_ctrl_break = 0; top->btn_shift_break = 0; }
@@ -368,6 +373,7 @@ static void usage() {
 	printf("  --osd-shift-break <n>         OSD SHIFT-BREAK button at field n. Repeatable\n");
 	printf("  --autoboot                    OSD Autoboot: On (SHIFT held at power-on; default Off in the sim)\n");
 	printf("  --rom <file>                  Load a 112 KB ROM image (ELK.mif layout) at power-on\n");
+	printf("  --cart1 / --cart2 <file>      OSD Cartridge 1 (ROMs 2/3) / 2 (ROMs 0/1) at power-on\n");
 	printf("  --tape <file>                 Load a tape (OSD F2) at --tape-frame (default 0)\n");
 	printf("  --tape-frame <n>\n");
 	printf("  --tape-rewind <n>             OSD Stop & Rewind at field n. Repeatable\n");
@@ -435,6 +441,8 @@ static int parse_args(int argc, char **argv) {
 		else if (a == "--osd-shift-break") opt_osd_shift_break.push_back(atoi(next().c_str()));
 		else if (a == "--autoboot") top->autoboot = 1;
 		else if (a == "--rom") opt_rom = next();
+		else if (a == "--cart1") opt_cart[0] = next();
+		else if (a == "--cart2") opt_cart[1] = next();
 		else if (a == "--tape") opt_tape = next();
 		else if (a == "--tape-frame") opt_tape_frame = atoi(next().c_str());
 		else if (a == "--tape-rewind") opt_tape_rewind.push_back(atoi(next().c_str()));
@@ -486,7 +494,9 @@ int main(int argc, char **argv) {
 	bus.ioctl_dout = &top->ioctl_dout;
 	input.ps2_key = &top->ps2_key;
 
-	if (!opt_rom.empty()) { bus.QueueDownload(opt_rom, 0, true); rom_pending = true; }
+	if (!opt_rom.empty()) { bus.QueueDownload(opt_rom, 0, true); rom_pending++; }
+	for (int c = 0; c < 2; c++)
+		if (!opt_cart[c].empty()) { bus.QueueDownload(opt_cart[c], 3 + c, true); rom_pending++; }
 
 	if (video.Initialise("Verilator Sim: Acorn Electron") == 1) return 1;
 	if (!headless) {

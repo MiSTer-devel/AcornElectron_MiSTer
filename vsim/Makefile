@@ -76,6 +76,7 @@ V_SRC = \
 	sim.v \
 	$(CORE_V) \
 	$(RTL)/electron_input.sv \
+	$(RTL)/electron_mem.sv \
 	$(RTL)/inflate.sv \
 	$(RTL)/uef_player.sv \
 	$(RTL)/tape.sv \

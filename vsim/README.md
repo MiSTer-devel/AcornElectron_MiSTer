@@ -3,7 +3,7 @@
 ```bash
 cd vsim
 make                 # GHDL converts the VHDL core, then Verilator builds obj_dir/Vemu
-./regression.sh      # 32 tests: boot, joysticks, resets, F-keys, CPU speed, MODE 0-6, tapes (~4 min, parallel; tapes need ../software)
+./regression.sh      # 33 tests: boot, joysticks, resets, F-keys, CPU speed, MODE 0-6, tapes (~4 min, parallel; tapes need ../software)
 ./obj_dir/Vemu       # GUI (ImGui window)
 ./obj_dir/Vemu --help
 ```
@@ -46,6 +46,7 @@ Run from this directory: `$readmemh` opens `ELK.hex` (made from `../roms/ELK.mif
 | `--osd-break <n>` / `--osd-ctrl-break <n>` / `--osd-shift-break <n>` | OSD BREAK / Ctrl-BREAK / SHIFT-BREAK buttons |
 | `--autoboot` | OSD Autoboot On (SHIFT-BREAK 300 ms after power-on; Off by default in the sim) |
 | `--rom <file>` | 112 KB ROM image (ELK.mif layout) loaded at power-on |
+| `--cart1 <file>` / `--cart2 <file>` | OSD Cartridge 1 (ROMs 2/3) / Cartridge 2 (ROMs 0/1) at power-on: 16 KB, or 32 KB for both ROMs |
 | `--tape <file>` / `--tape-frame <n>` / `--tape-rewind <n>` | OSD tape load / Stop & Rewind |
 | `--reset-at-frame <n>` | power-on reset (OSD Apply and reset) |
 | `--peek <frame>:<hex,hex>` / `--dump-ram <frame>:<file>` | read main RAM |

@@ -39,6 +39,16 @@ Most games load with `CHAIN""`; a few say `*RUN` on their inlay.
 - Gzipped UEFs (as in the Stairway to Hell archive) load as they are.
 
 
+## Cartridges
+
+The OSD rows Cartridge 1 and Cartridge 2 are the Plus 1's two cartridge
+sockets (ROMs 2/3 and 0/1). A `.rom` / `.bin` file of 16 KB fills the first
+ROM of the socket; a 32 KB file fills both. Loading one resets the machine
+so the MOS finds it. Most Acornsoft cartridges are ROM filing system
+cartridges: type `*ROM`, then `*CAT` to see the files and
+`CHAIN"name"` to run one (loading from ROM takes a few seconds).
+
+
 ## Notes from David Wood:
 
 
