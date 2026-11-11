@@ -3,7 +3,7 @@
 ```bash
 cd vsim
 make                 # GHDL converts the VHDL core, then Verilator builds obj_dir/Vemu
-./regression.sh      # 36 tests: boot, joysticks, resets, F-keys, CPU speed, MODE 0-7, cartridges, tapes (~8 min, parallel; tapes need ../software)
+./regression.sh      # 35 tests: boot, joysticks, resets, F-keys, CPU speed, MODE 0-7, cartridges, tapes (~8 min, parallel; tapes need ../software)
 ./obj_dir/Vemu       # GUI (ImGui window)
 ./obj_dir/Vemu --help
 ```
