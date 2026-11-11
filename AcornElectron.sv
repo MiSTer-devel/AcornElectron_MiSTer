@@ -362,6 +362,7 @@ ElectronFpga_core Electron
 	.video_blue(b),
 	.video_vblank(vblank),
 	.video_hblank(hblank),
+	.video_mode7(mode7),
 
 	.video_vsync(vs),
 	.video_hsync(hs),
@@ -420,18 +421,21 @@ assign AUDIO_R = audio_mix;
 assign AUDIO_MIX = 0;
 assign AUDIO_S = 1;
 
-wire hs, vs, hblank, vblank, ce_pix, clk_sel;
+wire hs, vs, hblank, vblank, ce_pix, clk_sel, mode7;
 wire [3:0] r,g,b;
 
-assign CLK_VIDEO = clk_64;
-
+// Video clock 48 MHz (same PLL as clk_16 / clk_24): a pixel every 3rd
+// clock for the ULA's 16 MHz pixels, every 4th in Mode 7 (the SAA5050's
+// 12 MHz pixels, clk_24 domain), so both get even pixels.
+assign CLK_VIDEO = clk_48;
 
 reg ce_pix2;
-always @(posedge CLK_VIDEO ) begin
-   reg [1:0] div;
-
-   div <= div + 1'd1;
-   ce_pix2 <= div == 0;
+always @(posedge CLK_VIDEO) begin
+	reg [1:0] div;
+	reg       m7;
+	m7 <= mode7;
+	div <= (div == (m7 ? 2'd3 : 2'd2)) ? 2'd0 : div + 1'd1;
+	ce_pix2 <= (div == 0);
 end
 
 

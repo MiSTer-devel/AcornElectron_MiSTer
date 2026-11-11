@@ -61,6 +61,9 @@ use ieee.std_logic_unsigned.all;
 use ieee.numeric_std.all;
 
 entity saa5050 is
+generic (
+    IncludeTTxtROM : boolean -- false if the SAA5050 character ROM needs loading
+    );
 port (
     CLOCK       :   in  std_logic;
     -- 6 MHz dot clock enable
@@ -83,12 +86,26 @@ port (
     CRS         :   in  std_logic; -- FIELD
     -- Load output shift register enable - high during active video
     LOSE        :   in  std_logic; -- DE
+    -- MiSTer: horizontal-only display enable (the 6845's, skewed as LOSE),
+    -- carried through the same pipeline as LOSE to HDE_OUT
+    HDE         :   in  std_logic := '0';
 
     -- Video out
     R           :   out std_logic;
     G           :   out std_logic;
     B           :   out std_logic;
-    Y           :   out std_logic
+    Y           :   out std_logic;
+    -- MiSTer: high while R/G/B show a character cell (LOSE, aligned to the
+    -- pixel output), for the video blanking
+    DE          :   out std_logic;
+    -- MiSTer: HDE aligned to the pixel output, on every line (the horizontal
+    -- blanking: sys video_cleaner latches VBlank where HBlank falls)
+    HDE_OUT     :   out std_logic;
+
+    -- SAA5050 character ROM loading
+    char_rom_we   : in std_logic := '0';
+    char_rom_addr : in std_logic_vector(11 downto 0) := (others => '0');
+    char_rom_data : in std_logic_vector(7 downto 0) := (others => '0')
     );
 end entity;
 
@@ -124,6 +141,8 @@ signal pixel_counter :  unsigned(3 downto 0);
 signal flash_counter :  unsigned(5 downto 0);
 -- Output shift register
 signal shift_reg    :   std_logic_vector(11 downto 0);
+signal de_sr        :   std_logic;   -- MiSTer: shift_reg holds a displayed character
+signal hde_r, hde_latch, h_enable, h_enable_r, hde_sr : std_logic;   -- MiSTer: HDE pipeline
 
 -- Flash mask
 signal flash        :   std_logic;
@@ -181,11 +200,13 @@ begin
             di_r <= (others => '0');
             dew_r <= '0';
             lose_r <= '0';
+            hde_r <= '0';
         elsif rising_edge(DI_CLOCK) then
             if DI_CLKEN = '1' then
                 di_r <= DI;
                 dew_r <= DEW;
                 lose_r <= LOSE;
+                hde_r <= HDE;
             end if;
         end if;
     end process;
@@ -207,6 +228,7 @@ begin
                 if pixel_counter = 0 then
                     code_r        <= code;
                     disp_enable_r <= disp_enable;
+                    h_enable_r    <= h_enable;
                     fg_r          <= fg;
                     bg_r          <= bg;
                     conceal_r     <= conceal;
@@ -234,6 +256,7 @@ begin
                 -- Register syncs for edge detection
                 dew_latch <= dew_r;
                 lose_latch <= lose_r;
+                hde_latch <= hde_r;
                 disp_enable_latch <= disp_enable;
 
                 -- When first entering double-height mode start on top row
@@ -246,6 +269,7 @@ begin
                     -- Start of next character and delayed display enable
                     pixel_counter <= (others => '0');
                     disp_enable <= lose_latch;
+                    h_enable <= hde_latch;
                 else
                     pixel_counter <= pixel_counter + 1;
                 end if;
@@ -446,7 +470,7 @@ begin
                     -- e.g. 03 (Alpha Yellow) 18 (Conceal) should leave us in a conceal state
                     if conceal = '1' and unconceal_next = '1' then
                         conceal <= '0';
-                    end if;                    
+                    end if;
                 end if;
             end if;
         end if;
@@ -465,7 +489,8 @@ begin
 
     hold_active <= '1' when gfx_hold = '1' and code_r(6 downto 5) = "00" else '0';
 
-    rom_address1 <= (others => '0') when (double_high = '0' and double_high2 = '1') else
+    rom_address1 <= char_rom_addr when char_rom_we = '1' and not IncludeTTxtROM else
+                    (others => '0') when (double_high = '0' and double_high2 = '1') else
                     gfx & last_gfx & std_logic_vector(line_addr) when hold_active = '1' else
                     gfx & code_r & std_logic_vector(line_addr);
 
@@ -473,13 +498,34 @@ begin
     rom_address2 <= rom_address1 + 1 when ((double_high = '0' and CRS = '1') or (double_high = '1' and line_counter(0) = '1')) else
                     rom_address1 - 1;
 
-    char_rom : entity work.saa5050_rom_dual_port port map (
-        clock    => CLOCK,
-        addressA => rom_address1,
-        QA       => rom_data1,
-        addressB => rom_address2,
-        QB       => rom_data2
-    );
+    -- If IncludeTTxtROM is true then we include the "ROM" version that is
+    -- initialized with the mode 7 character set data
+    -- (this is generally used for Xilinx builds)
+    char_rom_block: if IncludeTTxtROM generate
+        char_rom : entity work.saa5050_rom_dual_port port map (
+            clock    => CLOCK,
+            addressA => rom_address1,
+            QA       => rom_data1,
+            addressB => rom_address2,
+            QB       => rom_data2
+            );
+    end generate;
+
+
+    -- If IncludeTTxtROM is false then we include the "RAM" version that is
+    -- uninitialized, and needs loading during the core boostrap phase
+    -- (this is generally used for Altera builds)
+    char_ram_block: if not IncludeTTxtROM generate
+        char_ram : entity work.saa5050_rom_dual_port_uninitialized port map (
+            clock    => CLOCK,
+            wea      => char_rom_we,
+            addressA => rom_address1,
+            dina     => char_rom_data,
+            QA       => rom_data1,
+            addressB => rom_address2,
+            QB       => rom_data2
+            );
+    end generate;
 
     --------------------------------------------------------------------
     -- Shift register
@@ -490,8 +536,13 @@ begin
     begin
         if nRESET = '0' then
             shift_reg <= (others => '0');
+            de_sr <= '0';
         elsif rising_edge(CLOCK) then
             if CLKEN = '1' then
+                if pixel_counter = 0 then
+                    de_sr  <= disp_enable_r;
+                    hde_sr <= h_enable_r;
+                end if;
                 if disp_enable_r = '1' and pixel_counter = 0 then
                     -- Character rounding
 
@@ -556,9 +607,12 @@ begin
             R <= '0';
             G <= '0';
             B <= '0';
+            DE <= '0';
         elsif rising_edge(CLOCK) then
             if CLKEN = '1' then
                 pixel := shift_reg(11) and not ((flash and is_flash_r) or conceal_r);
+                DE <= de_sr;
+                HDE_OUT <= hde_sr;
 
                 -- Generate mono output
                 Y <= pixel;

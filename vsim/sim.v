@@ -15,12 +15,16 @@
 //    * the tape memory is a behavioural 4 MB array instead of SDRAM
 //    * the tape status bar runs on clk_sys (AcornElectron.sv: clk_64 with a
 //      1-in-4 pixel enable; same pixels); no ADC tape input
-//    * no SD card yet: SDMISO idles high, MMFS sees no card
-//    * CE_PIXEL is every clk_sys: the ULA's pixel clock is 16 MHz
+//    * SD card: sys/sd_card.sv as AcornElectron.sv; sim_main.cpp answers the
+//      hps_io block protocol from an image (--sd), else no card
+//    * video out on clk_48 as AcornElectron.sv: CE_PIXEL every 3rd clock
+//      (16 MHz ULA pixels), every 4th in Mode 7 (12 MHz SAA5050 pixels)
 //============================================================================
 
 module emu (
 	input             clk_sys,          // 16 MHz, toggled by sim_main.cpp
+	input             clk_24,           // 24 MHz: the SAA5050 (Mode 7)
+	input             clk_48,           // 48 MHz: video out (CLK_VIDEO)
 	input             reset_in,         // board / OSD Apply and reset
 
 	input      [10:0] ps2_key,          // [7:0] code, [8] ext, [9] pressed, [10] toggle
@@ -57,6 +61,23 @@ module emu (
 	output            VGA_HB,
 	output            VGA_VB,
 	output            CE_PIXEL,
+
+	// SD card image (hps_io block protocol, driven by sim_main.cpp --sd)
+	input             img_mounted,
+	input      [63:0] img_size,
+	output     [31:0] sd_lba,
+	output            sd_rd,
+	output            sd_wr,
+	input             sd_ack,
+	input       [8:0] sd_buff_addr,
+	input       [7:0] sd_buff_dout,
+	output      [7:0] sd_buff_din,
+	input             sd_buff_wr,
+
+	// sys video_mixer + video_calc, as on MiSTer: what Main reads (--vcheck)
+	input       [4:0] vc_par,
+	output     [15:0] vc_dout,
+	output      [4:0] dbg_sd,           // SD: vsd_sel, ss, sck, mosi, miso
 
 	output     [15:0] AUDIO_L,
 	output     [15:0] AUDIO_R,
@@ -156,7 +177,7 @@ electron_joy electron_joy
 
 // -------------------------------------------------------------------- core
 
-wire hs, vs, hblank, vblank, ce_pix;
+wire hs, vs, hblank, vblank, ce_pix, mode7;
 wire [3:0] r, g, b;
 wire audio_snl, audio_snr;
 wire cas_relay;
@@ -168,7 +189,7 @@ wire [15:0] cpu_addr;
 ElectronFpga_core Electron
 (
 	.clk_16M00(clk_sys),
-	.clk_24M00(1'b0),
+	.clk_24M00(clk_24),
 	.clk_32M00(1'b0),
 	.clk_33M33(1'b0),
 	.clk_40M00(1'b0),
@@ -189,6 +210,7 @@ ElectronFpga_core Electron
 	.video_hblank(hblank),
 	.video_vsync(vs),
 	.video_hsync(hs),
+	.video_mode7(mode7),
 
 	.audio_l(audio_snl),
 	.audio_r(audio_snr),
@@ -200,10 +222,10 @@ ElectronFpga_core Electron
 	.ext_Dout(mem_dout),
 	.ext_Din(mem_din),
 
-	.SDMISO(1'b1),
-	.SDCLK(),
-	.SDMOSI(),
-	.SDSS(),
+	.SDMISO(sdmiso),
+	.SDCLK(sdclk),
+	.SDMOSI(sdmosi),
+	.SDSS(sdss),
 
 	.caps_led(),
 	.motor_led(cas_relay),
@@ -250,10 +272,20 @@ tape_status tape_status
 	.ack(tape_status_ack)
 );
 
+// Video out, as AcornElectron.sv: clk_48 with a 16 MHz (ULA) or 12 MHz
+// (Mode 7) pixel enable; registered here so sim_main samples one set.
+reg  [1:0] pdiv = 0;
+reg        ce48 = 0;
+always @(posedge clk_48) begin
+	pdiv <= (pdiv == (mode7 ? 2'd3 : 2'd2)) ? 2'd0 : pdiv + 1'd1;
+	ce48 <= (pdiv == 0);
+end
+wire [23:0] ov_rgb;
+
 tape_overlay #(.FACTOR(4'd8)) tape_overlay
 (
-	.clk(clk_sys),
-	.ce_pix(1'b1),
+	.clk(clk_48),
+	.ce_pix(ce48),
 	.hblank(hblank),
 	.vblank(vblank),
 	.enable(~tape_overlay_off),
@@ -261,13 +293,47 @@ tape_overlay #(.FACTOR(4'd8)) tape_overlay
 	.req(tape_status_req),
 	.ack(tape_status_ack),
 	.rgb_in({r, r, g, g, b, b}),
-	.rgb_out({VGA_R, VGA_G, VGA_B})
+	.rgb_out(ov_rgb)
 );
-assign VGA_HS = hs;
-assign VGA_VS = vs;
-assign VGA_HB = hblank;
-assign VGA_VB = vblank;
-assign CE_PIXEL = 1'b1;
+
+reg [23:0] vo_rgb;
+reg        vo_hs, vo_vs, vo_hb, vo_vb, vo_ce = 0;
+always @(posedge clk_48) begin
+	vo_ce <= ce48;
+	if (ce48) begin vo_rgb <= ov_rgb; vo_hs <= hs; vo_vs <= vs; vo_hb <= hblank; vo_vb <= vblank; end
+end
+assign {VGA_R, VGA_G, VGA_B} = vo_rgb;
+assign VGA_HS = vo_hs;
+assign VGA_VS = vo_vs;
+assign VGA_HB = vo_hb;
+assign VGA_VB = vo_vb;
+assign CE_PIXEL = vo_ce;
+
+// The framework's own video path up to its measurement: sys/video_mixer.sv
+// (GAMMA off), sync_fix and video_calc (extracted from sys/ by the Makefile).
+// Main shows a new resolution only when video_calc reports a stable one.
+wire [7:0] vm_r, vm_g, vm_b;
+wire       vm_ce, vm_hs, vm_vs, vm_de;
+wire [21:0] vm_gamma;
+video_mixer #(.GAMMA(0)) video_mixer
+(
+	.CLK_VIDEO(clk_48), .CE_PIXEL(vm_ce), .ce_pix(ce48),
+	.scandoubler(1'b0), .hq2x(1'b0), .gamma_bus(vm_gamma),
+	.R(ov_rgb[23:16]), .G(ov_rgb[15:8]), .B(ov_rgb[7:0]),
+	.HSync(hs), .VSync(vs), .HBlank(hblank), .VBlank(vblank),
+	.HDMI_FREEZE(1'b0), .freeze_sync(),
+	.VGA_R(vm_r), .VGA_G(vm_g), .VGA_B(vm_b), .VGA_VS(vm_vs), .VGA_HS(vm_hs), .VGA_DE(vm_de)
+);
+wire vm_vs_fix, vm_hs_fix;
+sync_fix sync_v(clk_48, vm_vs, vm_vs_fix);
+sync_fix sync_h(clk_48, vm_hs, vm_hs_fix);
+video_calc video_calc
+(
+	.clk_100(clk_48), .clk_vid(clk_48), .clk_sys(clk_sys),
+	.ce_pix(vm_ce), .de(vm_de), .hs(vm_hs_fix), .vs(vm_vs_fix), .vs_hdmi(1'b0), .f1(1'b0),
+	.new_vmode(1'b0), .video_rotated(1'b0),
+	.par_num(vc_par), .dout(vc_dout)
+);
 
 // ------------------------------------------------------------------- audio
 // Same as AcornElectron.sv.
@@ -334,6 +400,23 @@ tape #(.CLK_HZ(16000000)) tape
 	.position(tape_pos),
 	.length(tape_len),
 	.qtick(tape_qtick)
+);
+
+// ---------------------------------------------------------------- SD card
+// As AcornElectron.sv: MMFS's SPI card is sys/sd_card.sv on the image.
+wire sdclk, sdmosi, sdss, vsdmiso;
+reg  vsd_sel = 0;
+always @(posedge clk_sys) if (img_mounted) vsd_sel <= |img_size;
+wire sdmiso = vsd_sel ? vsdmiso : 1'b1;
+assign dbg_sd = {vsd_sel, sdss, sdclk, sdmosi, sdmiso};
+
+sd_card sd_card
+(
+	.clk_sys(clk_sys), .reset(reset),
+	.sdhc(1'b1), .img_mounted(img_mounted), .img_size(img_size),
+	.sd_lba(sd_lba), .sd_rd(sd_rd), .sd_wr(sd_wr), .sd_ack(sd_ack),
+	.sd_buff_addr(sd_buff_addr), .sd_buff_dout(sd_buff_dout), .sd_buff_din(sd_buff_din), .sd_buff_wr(sd_buff_wr),
+	.clk_spi(clk_sys), .ss(sdss | ~vsd_sel), .sck(sdclk), .mosi(sdmosi), .miso(vsdmiso)
 );
 
 // ------------------------------------------------------------------- debug

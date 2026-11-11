@@ -130,25 +130,129 @@ static void cpu_trace_sample() {
 	}
 }
 
+// Clocks: one 96 MHz sub-step counter drives clk_48 (every sub-step),
+// clk_24 (every 2nd) and clk_sys = 16 MHz (every 3rd), so their edges line
+// up as from one PLL. A tick() is half a clk_sys period (3 sub-steps).
+static uint64_t substep = 0;
+
+// --sd <image>: an SD card for MMFS (sys/sd_card.sv in sim.v), answering
+// hps_io's block protocol (512-byte blocks) at clk_sys. Writes stay in
+// memory; the image file is never changed.
+static std::vector<uint8_t> sd_img;
+static bool sd_present = false, sd_mounted = false, sd_write = false;
+static int sd_state = 0, sd_pos = 0;
+static uint32_t sd_blk = 0;
+static bool opt_sd_log = false;
+static void sd_card_step() {
+	if (opt_sd_log) {
+		static unsigned last = 0, tog[5]; unsigned d = top->dbg_sd;
+		for (int b = 0; b < 5; b++) if (((d ^ last) >> b) & 1) tog[b]++;
+		// decode SPI mode 0: sample MOSI/MISO on SCK rising
+		static int nb = 0, nbytes = 0; static unsigned bo = 0, bi = 0;
+		if ((d & 4) && !(last & 4) && nbytes < 400) {
+			bo = (bo << 1) | ((d >> 1) & 1); bi = (bi << 1) | (d & 1);
+			if (++nb == 8) { printf("SPI %02X/%02X%s", bo & 0xFF, bi & 0xFF, (++nbytes % 12) ? " " : "\n"); nb = 0; bo = bi = 0; }
+		}
+		last = d;
+		if ((main_time % 1600000) == 0) printf("SDDBG t=%llu sel %u ss %u (tog %u) sck tog %u mosi tog %u miso tog %u\n",
+			(unsigned long long)main_time, (d >> 4) & 1, (d >> 3) & 1, tog[3], tog[2], tog[1], tog[0]);
+	}
+	top->img_mounted = 0;
+	top->sd_buff_wr = 0;
+	if (!sd_present) return;
+	if (!sd_mounted) {
+		if (main_time > 100) { top->img_mounted = 1; top->img_size = sd_img.size(); sd_mounted = true; }
+		return;
+	}
+	switch (sd_state) {
+	case 0:
+		if (top->sd_rd || top->sd_wr) {
+			sd_write = top->sd_wr; sd_blk = top->sd_lba; sd_pos = 0; sd_state = 1; top->sd_ack = 1;
+			if (opt_sd_log) printf("SD %s block %u (frame %d)\n", sd_write ? "write" : "read", sd_blk, video.count_frame);
+		}
+		break;
+	case 1: {
+		size_t off = (size_t)sd_blk * 512 + sd_pos;
+		top->sd_buff_addr = sd_pos;
+		if (!sd_write) {
+			top->sd_buff_dout = off < sd_img.size() ? sd_img[off] : 0;
+			top->sd_buff_wr = 1;
+		} else if (sd_pos > 0) {   // din follows addr one clock later (registered block RAM)
+			size_t o = (size_t)sd_blk * 512 + sd_pos - 1;
+			if (o < sd_img.size()) sd_img[o] = top->sd_buff_din;
+		}
+		if (++sd_pos == (sd_write ? 513 : 512)) sd_state = 2;
+		break;
+	}
+	case 2:
+		top->sd_ack = 0;
+		sd_state = 0;
+		break;
+	}
+}
+
+// --video-stats: per field (vsync to vsync) the active lines, the active
+// pixels of the widest line, the total lines and pixels per line
+static bool opt_video_stats = false;
+// --vcheck: what Main reads from sys video_calc (par 1: nres in [7:0], int
+// in [9:8]; 2/3 hcnt, 4/5 vcnt), sampled round-robin, printed each field
+static bool opt_vcheck = false;
+static uint16_t vc_val[32];
+static int vc_par = 1;
+static void video_stats(bool hb, bool vb, bool hs, bool vs) {
+	static bool ohs = 1, ovs = 1;
+	static int px = 0, de_px = 0, max_de = 0, min_de = 1 << 30, lines = 0, de_lines = 0, line_px = 0;
+	bool de = !hb && !vb;
+	px++; if (de) de_px++;
+	if (!hs && ohs) {                    // hsync falling: end of a line
+		if (de_px) { de_lines++; if (de_px > max_de) max_de = de_px; if (de_px < min_de) min_de = de_px; }
+		lines++; line_px = px; px = 0; de_px = 0;
+	}
+	if (!vs && ovs) {                    // vsync falling: end of a field
+		printf("VSTATS frame %d: %d active lines, %d-%d active px/line, %d lines, %d px/line\n",
+		       video.count_frame, de_lines, min_de == (1 << 30) ? 0 : min_de, max_de, lines, line_px);
+		lines = de_lines = max_de = 0; min_de = 1 << 30;
+	}
+	// edges within a line (pixel index from hsync falling), for a few lines
+	static bool ohb = 1, ovb = 1; static int dump = 0;
+	if (getenv("VSTATS_EDGES") && video.count_frame == atoi(getenv("VSTATS_EDGES"))) {
+		if (hs != ohs && dump < 40) { printf("EDGE px %d HS %d (vb %d)\n", px, hs, vb); dump++; }
+		if (hb != ohb && dump < 40) { printf("EDGE px %d HB %d\n", px, hb); dump++; }
+		if (vb != ovb) { printf("EDGE px %d VB %d line %d\n", px, vb, lines); dump++; }
+		if (vs != ovs) { printf("EDGE px %d VS %d line %d\n", px, vs, lines); dump++; }
+	}
+	ohb = hb; ovb = vb;
+	ohs = hs; ovs = vs;
+}
+
 static void tick() {
-	clk_sys.Tick();
-	top->clk_sys = clk_sys.clk;
-	if (clk_sys.clk != clk_sys.old) {
-		if (clk_sys.clk && opt_trace_from >= 0) cpu_trace_sample();
-		if (clk_sys.clk) { input.BeforeEval(); bus.BeforeEval(); }
+	for (int i = 0; i < 3; i++, substep++) {
+		bool c16 = (substep % 6) < 3, c24 = (substep % 4) < 2, c48 = (substep % 2) == 0;
+		bool r16 = c16 && !top->clk_sys, r48 = c48 && !top->clk_48;
+		if (r16 && opt_trace_from >= 0) cpu_trace_sample();
+		if (r16) { input.BeforeEval(); bus.BeforeEval(); sd_card_step(); }
+		top->clk_sys = c16; top->clk_24 = c24; top->clk_48 = c48;
 		top->eval();
 #if VM_TRACE_VCD
-		if (tfp) tfp->dump(main_time * 2 + (clk_sys.clk ? 0 : 1));
+		if (tfp) tfp->dump(substep);
 #endif
-		if (clk_sys.clk) bus.AfterEval();
-	}
-	if (clk_sys.IsRising()) {
-		audio.Clock(top->AUDIO_L, top->AUDIO_R);
-		if (top->CE_PIXEL) {
+		if (r16) {
+			if (opt_vcheck) {
+				vc_val[vc_par] = top->vc_dout;   // dout follows par_num one clk_sys later
+				static const int pars[] = {1, 2, 4, 17, 18};
+				static int pi = 0;
+				static int wait = 0;
+				if (++wait == 4) { wait = 0; pi = (pi + 1) % 5; vc_par = pars[pi]; top->vc_par = vc_par; }
+			}
+			bus.AfterEval();
+			audio.Clock(top->AUDIO_L, top->AUDIO_R);
+			main_time++;
+		}
+		if (r48 && top->CE_PIXEL) {
 			uint32_t colour = 0xFF000000 | top->VGA_B << 16 | top->VGA_G << 8 | top->VGA_R;
 			video.Clock(top->VGA_HB, top->VGA_VB, top->VGA_HS, top->VGA_VS, colour);
+			if (opt_video_stats) video_stats(top->VGA_HB, top->VGA_VB, top->VGA_HS, top->VGA_VS);
 		}
-		main_time++;
 	}
 }
 
@@ -334,6 +438,8 @@ static bool on_frame(int frame) {
 			printf("PEEK frame %d %04X = %02X\n", frame, a, ram_peek(a));
 		}
 	}
+	if (opt_vcheck) printf("VCHECK frame %d: nres %d int %d hcnt %d vcnt %d de_h %d de_v %d\n", frame,
+		vc_val[1] & 0xFF, (vc_val[1] >> 8) & 3, vc_val[2], vc_val[4], vc_val[17], vc_val[18]);
 	if (opt_hash) printf("FBHASH frame %d %016llx\n", frame, fb_hash());
 	bool shot = std::find(opt_screenshot_frames.begin(), opt_screenshot_frames.end(), frame) != opt_screenshot_frames.end();
 	if (opt_screenshot_every > 0 && frame > 0 && frame % opt_screenshot_every == 0) shot = true;
@@ -374,6 +480,7 @@ static void usage() {
 	printf("  --autoboot                    OSD Autoboot: On (SHIFT held at power-on; default Off in the sim)\n");
 	printf("  --rom <file>                  Load a 112 KB ROM image (ELK.mif layout) at power-on\n");
 	printf("  --cart1 / --cart2 <file>      OSD Cartridge 1 (ROMs 2/3) / 2 (ROMs 0/1) at power-on\n");
+	printf("  --sd <image> [--sd-log]       SD card image for MMFS (MMB / boot.vhd); writes stay in memory\n");
 	printf("  --tape <file>                 Load a tape (OSD F2) at --tape-frame (default 0)\n");
 	printf("  --tape-frame <n>\n");
 	printf("  --tape-rewind <n>             OSD Stop & Rewind at field n. Repeatable\n");
@@ -441,6 +548,16 @@ static int parse_args(int argc, char **argv) {
 		else if (a == "--osd-shift-break") opt_osd_shift_break.push_back(atoi(next().c_str()));
 		else if (a == "--autoboot") top->autoboot = 1;
 		else if (a == "--rom") opt_rom = next();
+		else if (a == "--video-stats") opt_video_stats = true;
+		else if (a == "--vcheck") opt_vcheck = true;
+		else if (a == "--sd-log") opt_sd_log = true;
+		else if (a == "--sd") {
+			FILE *f = fopen(next().c_str(), "rb");
+			if (!f) { fprintf(stderr, "--sd: cannot open image\n"); return 2; }
+			fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+			sd_img.resize(n); if (fread(sd_img.data(), 1, n, f) != (size_t)n) { fprintf(stderr, "--sd: short read\n"); return 2; }
+			fclose(f); sd_present = true;
+		}
 		else if (a == "--cart1") opt_cart[0] = next();
 		else if (a == "--cart2") opt_cart[1] = next();
 		else if (a == "--tape") opt_tape = next();

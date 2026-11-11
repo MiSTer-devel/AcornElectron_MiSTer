@@ -70,6 +70,8 @@ port (
 	VSYNC		:	out	std_logic;
 	HSYNC		:	out	std_logic;
 	DE			:	out	std_logic;
+	VDE			:	out	std_logic;	-- MiSTer: vertical display enable (for the video blanking)
+	HDE			:	out	std_logic;	-- MiSTer: horizontal display enable, skewed as DE, on every line
 	CURSOR		:	out	std_logic;
 	LPSTB		:	in	std_logic;
 
@@ -139,6 +141,8 @@ signal lpstb_i			:	std_logic;
 signal de0				:	std_logic;
 signal de1				:	std_logic;
 signal de2				:	std_logic;
+signal hde1				:	std_logic;
+signal hde2				:	std_logic;
 signal cursor0			:	std_logic;
 signal cursor1			:	std_logic;
 signal cursor2			:	std_logic;
@@ -149,6 +153,7 @@ begin
 	VSYNC <= vs; -- External VSYNC driven directly from internal signal
 
 	de0 <= h_display and v_display;
+	VDE <= v_display;
 
     -- In Mode 7 DE Delay is set to 01, but in our implementation no delay is needed
     -- TODO: Fix SAA5050
@@ -156,6 +161,10 @@ begin
 		  de0 when r08_interlace(5 downto 4) = "01" else -- not accurate, should be de1
 		  de2 when r08_interlace(5 downto 4) = "10" else
 		  '0';
+	HDE <= h_display when r08_interlace(5 downto 4) = "00" else
+		   h_display when r08_interlace(5 downto 4) = "01" else
+		   hde2      when r08_interlace(5 downto 4) = "10" else
+		   '0';
 
 	-- Cursor output generated combinatorially from the internal signal in
 	-- accordance with the currently selected cursor mode
@@ -560,6 +569,8 @@ begin
 			if CLKEN = '1' then
 				de1		<= de0;
 				de2		<= de1;
+				hde1	<= h_display;
+				hde2	<= hde1;
 				cursor1 <= cursor0;
 				cursor2 <= cursor1;
 			end if;

@@ -39,6 +39,21 @@ Most games load with `CHAIN""`; a few say `*RUN` on their inlay.
 - Gzipped UEFs (as in the Stairway to Hell archive) load as they are.
 
 
+## Mode 7
+
+The core includes the JAFA Mode 7 board (a 6845 at &FC1C-&FC1F and an
+SAA5050 teletext chip) with its ROM in slot 15. Switch it on once with
+`*MODE7ON` (or `*M7ON`) and press BREAK; after that `MODE 7` is the BBC's
+teletext mode: 40 x 25 characters, colour codes, graphics and double height.
+`*MODE7OFF` and BREAK switch it off again. The picture is 480 x 250 at
+12 MHz pixels, interlaced as on a BBC.
+
+The JAFA ROM 1.91 here is patched: it added the byte at &0290 (`*TV`'s
+vertical offset on a BBC) to the 6845's vsync position, but this MMFS uses
+&0290 as workspace, so with an SD card the screen lost its vsync and went
+black. Patched at &8A00 / &AA00: `ADC &0290` -> `ADC #0` (as `*TV 0`).
+
+
 ## Cartridges
 
 The OSD rows Cartridge 1 and Cartridge 2 are the Plus 1's two cartridge

@@ -67,6 +67,13 @@ $SIM --headless --autoboot --stop-at-frame 150 --screenshot 150 --screenshot-dir
 $SIM --headless --key-hold 2 --key-gap 2 --send-keys '110:*KEY1?&77=42\n' --send-keys '250:\f1\n' \
 	--peek 450:77 --stop-at-frame 450 > "$OUT/fkey.log" &
 
+# --- 5a. Mode 7 (Jafa: 6845 at &FC1C + SAA5050, ROM in slot 15): *MODE7ON,
+# BREAK, then teletext colour codes and double height: "RED" red, "GRN"
+# green, the top half of a double-height "BIG"; 480 x 250, 12 MHz pixels.
+$SIM --headless --key-hold 2 --key-gap 2 --send-keys '110:*MODE7ON\n' --send-keys '170:\k' \
+	--send-keys '260:P.CHR$129"RED"CHR$130"GRN"CHR$141"BIG"\n' --screenshot 550 --screenshot-dir "$OUT" \
+	--screenshot-prefix mode7 --stop-at-frame 550 > "$OUT/mode7.log" 2>&1 &
+
 # --- 5b. Plus 1 cartridges (OSD Cartridge 1 / 2): Cartridge 2 = BASIC (16 KB)
 # fills ROM 0, Cartridge 1 = 16 KB of zeros + BASIC (32 KB) fills ROM 3 (ROM 2
 # empty). OSRDRM (&FFB9) reads &8009 of ROMs 0-3 into &70-&73: 'B' = &42 where
@@ -163,6 +170,7 @@ shot_check() {   # log golden label
 shot_check shift_break 8e7a54ac4af27b7b "SHIFT-BREAK boots (Card?)"
 shot_check autoboot    c3f63c738653f105 "Autoboot boots (Card?)"
 peek_check fkey "2A" "F1 = FUNC+1"
+shot_check mode7 03954d3e8c3e5d93 "Mode 7: teletext colours and double height"
 peek_check cart "42 00 00 42" "cartridges: ROM 0 = Cartridge 2, ROM 3 = Cartridge 1 upper 16 KB"
 if [ $TAPES = 1 ]; then
 	shot_check tape_boxer_main ffb8fb706f11f961 "tape: Boxer as Main sends it (bit stream) at 8x to title"

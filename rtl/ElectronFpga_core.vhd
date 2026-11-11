@@ -22,7 +22,7 @@ entity ElectronFpga_core is
     generic (
         IncludeICEDebugger : boolean := false;
         IncludeABRRegs     : boolean := false;
-        IncludeJafaMode7   : boolean := false
+        IncludeJafaMode7   : boolean := true    -- MiSTer: Jafa Mode 7 (6845 + SAA5050, ROM in slot 15)
     );
     port (
         -- Clocks
@@ -48,6 +48,7 @@ entity ElectronFpga_core is
         video_hsync    : out std_logic;
 		  video_hblank   : out std_logic;
 		  video_vblank   : out std_logic;
+        video_mode7    : out std_logic;   -- Mode 7 picture: 12 MHz pixels (clk_24M00 domain RGB)
         -- Audio
         audio_l        : out std_logic;
         audio_r        : out std_logic;
@@ -210,6 +211,7 @@ begin
         hsync     => video_hsync,
 		  hblank		=> video_hblank,
 		  vblank		=> video_vblank,
+        mode7     => video_mode7,
 
         -- Audio
         sound     => sound,

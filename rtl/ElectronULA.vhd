@@ -22,7 +22,9 @@
 --   - without IncludeVGA the video clock is clk_16M00 itself
 --   - vsync/hsync are kept separate in the 15 kHz modes (MiSTer's video path
 --     needs both)
---   - Jafa Mode 7 removed (mode7_enable = '0')
+--   - Jafa Mode 7 (upstream's, IncludeJafaMode7): for MiSTer it also drives
+--     hblank/vblank from the SAA5050's pixel-aligned DE and the 6845's VDE,
+--     separate syncs, and a `mode7` output (12 MHz pixels on clk_24M00)
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -74,6 +76,7 @@ entity ElectronULA is
         hsync     : out std_logic;
         hblank    : out std_logic;
         vblank    : out std_logic;
+        mode7     : out std_logic;   -- MiSTer: the Mode 7 picture is shown (12 MHz pixels, clk_24M00)
 
         -- Audio
         sound     : out std_logic;
@@ -285,6 +288,12 @@ architecture behavioral of ElectronULA is
   signal mist_vs        :   std_logic;
 
   signal mode7_enable   :   std_logic;
+  signal hblank_int     :   std_logic;
+  signal vblank_int     :   std_logic;
+  signal crtc_vde       :   std_logic;
+  signal ttxt_de        :   std_logic;
+  signal ttxt_hde       :   std_logic;
+  signal crtc_hde       :   std_logic;
 
   -- internal signals to generate the video clock
   signal clk_16M00_a    :   std_logic;
@@ -540,6 +549,8 @@ begin
                 "0000" & (kbd xor "1111") when kbd_access = '1' else
                 isr_data                  when addr(15 downto 8) = x"FE" and addr(3 downto 0) = x"0" else
                 data_shift                when addr(15 downto 8) = x"FE" and addr(3 downto 0) = x"4" else
+                crtc_do                   when crtc_enable = '1' and IncludeJafaMode7 else
+                status_do                 when status_enable = '1' and IncludeJafaMode7 else
                 mc6522_data               when mc6522_enable = '1' and IncludeMMC else
                 plus_1_stat_reg           when addr = x"FC72" else
                 plus_1_adc_data           when addr = x"FC70" else
@@ -549,6 +560,8 @@ begin
     data_en  <= '1'                       when addr(15) = '0' else
                 '1'                       when kbd_access = '1' else
                 '1'                       when addr(15 downto 8) = x"FE" else
+                '1'                       when crtc_enable = '1' and IncludeJafaMode7 else
+                '1'                       when status_enable = '1' and IncludeJafaMode7 else
                 '1'                       when mc6522_enable = '1' and IncludeMMC else
                 '1'                       when addr = x"FC72" else
                 '1'                       when addr = x"FC70" else
@@ -1063,14 +1076,14 @@ begin
             -- MiSTer: blanking for the video mixer (the full 640x256 area,
             -- text modes leave their last 6 lines as border)
             if (v_count >= v_active_gph) then
-                vblank <= '1';
+                vblank_int <= '1';
             else
-                vblank <= '0';
+                vblank_int <= '0';
             end if;
             if (h_count1 >= h_active) then
-                hblank <= '1';
+                hblank_int <= '1';
             else
-                hblank <= '0';
+                hblank_int <= '0';
             end if;
 
             -- RGB Data
@@ -1226,14 +1239,21 @@ begin
         end if;
     end process;
 
-    red   <= red_int;
-    green <= green_int;
-    blue  <= blue_int;
+    -- Mode 7: the SAA5050's pixels (clk_24M00 domain) and the 6845's timing
+    red   <= (others => ttxt_r) when mode7_enable = '1' else red_int;
+    green <= (others => ttxt_g) when mode7_enable = '1' else green_int;
+    blue  <= (others => ttxt_b) when mode7_enable = '1' else blue_int;
 
     -- MiSTer: separate syncs in every mode (upstream merges vsync into hsync
     -- at 15 kHz for a composite-sync RGB output)
-    vsync <= vsync_int;
-    hsync <= hsync_int;
+    vsync <= crtc_vsync_n when mode7_enable = '1' else vsync_int;
+    hsync <= crtc_hsync_n when mode7_enable = '1' else hsync_int;
+
+    -- hblank toggles on every line (sys video_cleaner latches VBlank where
+    -- HBlank falls), so it is the horizontal-only display enable
+    hblank <= not ttxt_hde when mode7_enable = '1' else hblank_int;
+    vblank <= not crtc_vde when mode7_enable = '1' else vblank_int;
+    mode7  <= mode7_enable;
 
     h_cnt <= h_count;
     v_cnt <= v_count;
@@ -1480,8 +1500,134 @@ begin
 
     end generate;
 
-    -- MiSTer: Jafa Mode 7 is not included
-    mode7_enable <= '0';
+--------------------------------------------------------
+-- Optional Jafa Mk1 Compatible Mode 7 Implementation (upstream)
+--------------------------------------------------------
+
+    JafaIncluded: if IncludeJafaMode7 generate
+        -- FC1C - Write address register
+        -- FC1D - Write data register
+        -- FC1E - Read status register - only bit 5 (vsync) is implemented
+        -- FC1F - Read data register
+
+        process (clk_16M00)
+        variable counter : std_logic_vector(3 downto 0);
+        begin
+            if rising_edge(clk_16M00) then
+                if counter = "1111" then
+                    crtc_clken <= '1';
+                else
+                    crtc_clken <= '0';
+                end if;
+                counter := counter + 1;
+                -- Generate a cursor signal that is delayed by 2 characters
+                if crtc_clken = '1' then
+                    crtc_cursor1 <= crtc_cursor;
+                    crtc_cursor2 <= crtc_cursor1;
+                end if;
+            end if;
+        end process;
+
+        using_ext_ttxt_clock : if UseTTxtClock generate
+            ttxt_clock <= clk_ttxt;
+            ttxt_clken <= clken_ttxt_12M;
+        end generate;
+
+        using_24mhz_ttxt_clock : if not UseTTxtClock generate
+            -- Use 24 MHz clock and generate 12 MHz enable
+            ttxt_clock <= clk_24M00;
+            process (clk_24M00)
+            begin
+                if rising_edge(clk_24M00) then
+                    ttxt_clken <= not ttxt_clken;
+                end if;
+            end process;
+        end generate;
+
+        crtc_enable <= '1' when addr(15 downto 0) = x"fc1c" or
+                                addr(15 downto 0) = x"fc1d" or
+                                addr(15 downto 0) = x"fc1f"
+                           else '0';
+
+        status_enable <= '1' when addr(15 downto 0) = x"fc1e" else '0';
+
+        status_do <= "00" & crtc_vsync & "00000";
+
+        crtc : entity work.mc6845 port map (
+            CLOCK  => clk_16M00,
+            CLKEN  => crtc_clken,
+            nRESET => RST_n,
+            ENABLE => crtc_enable,
+            R_nW   => R_W_n,
+            RS     => addr(0),
+            DI     => data_in,
+            LPSTB  => '0',
+            DO     => crtc_do,
+            VSYNC  => crtc_vsync,
+            HSYNC  => crtc_hsync,
+            DE     => crtc_de,
+            VDE    => crtc_vde,
+            HDE    => crtc_hde,
+            CURSOR => crtc_cursor,
+            MA     => crtc_ma,
+            RA     => crtc_ra
+        );
+
+        crtc_hsync_n <= not crtc_hsync;
+        crtc_vsync_n <= not crtc_vsync;
+
+        ttxt_glr  <= crtc_hsync_n;
+        ttxt_dew  <= crtc_vsync;
+        ttxt_crs  <= not crtc_ra(0);
+        ttxt_lose <= crtc_de;
+
+        teletext : entity work.saa5050
+        generic map (
+            IncludeTTxtROM => IncludeTTxtROM
+        )
+        port map (
+            CLOCK    => ttxt_clock,
+            CLKEN    => ttxt_clken,
+            nRESET   => RST_n,
+            DI_CLOCK => clk_16M00,
+            DI_CLKEN => '1',
+            DI       => screen_data(6 downto 0),
+            GLR      => ttxt_glr,
+            DEW      => ttxt_dew,
+            CRS      => ttxt_crs,
+            LOSE     => ttxt_lose,
+            HDE      => crtc_hde,
+            R        => ttxt_r_int,
+            G        => ttxt_g_int,
+            B        => ttxt_b_int,
+            Y        => open,
+            DE       => ttxt_de,
+            HDE_OUT  => ttxt_hde,
+            char_rom_we   => char_rom_we,
+            char_rom_addr => char_rom_addr,
+            char_rom_data => char_rom_data
+        );
+
+        -- make the cursor visible
+        ttxt_r <= ttxt_r_int xor crtc_cursor2;
+        ttxt_g <= ttxt_g_int xor crtc_cursor2;
+        ttxt_b <= ttxt_b_int xor crtc_cursor2;
+
+        -- enable mode 7
+        mode7_enable <= crtc_ma(13);
+    end generate;
+
+    JafaNotIncluded: if not IncludeJafaMode7 generate
+        mode7_enable <= '0';
+        crtc_vde     <= '0';
+        ttxt_de      <= '0';
+        ttxt_hde     <= '0';
+        ttxt_r       <= '0';
+        ttxt_g       <= '0';
+        ttxt_b       <= '0';
+        crtc_hsync_n <= '1';
+        crtc_vsync_n <= '1';
+    end generate;
 
 --------------------------------------------------------
 -- Plus 1 joystick interface (ADC0844 at &FC70, status at &FC72)

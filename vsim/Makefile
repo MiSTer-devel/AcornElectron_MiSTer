@@ -25,10 +25,14 @@ VHDL_SRC = \
 	$(RTL)/via6522.vhd \
 	$(RTL)/ps2kybrd/keyboard.vhd \
 	rtl/RAM_32k_DualPort_sim.vhd \
+	$(RTL)/mode7/mc6845.vhd \
+	$(RTL)/mode7/saa5050_rom_dual_port.vhd \
+	$(RTL)/mode7/saa5050_rom_dual_port_uninitialized.vhd \
+	$(RTL)/mode7/saa5050.vhd \
 	$(RTL)/ElectronULA.vhd \
 	$(RTL)/ElectronFpga_core.vhd
 
-GHDL_FLAGS = --std=08 -fsynopsys --workdir=$(GEN)
+GHDL_FLAGS = --std=08 -fsynopsys -frelaxed --workdir=$(GEN)
 CORE_V = $(GEN)/electron_core.v
 
 $(CORE_V): $(VHDL_SRC) Makefile
@@ -38,6 +42,13 @@ $(CORE_V): $(VHDL_SRC) Makefile
 	$(GHDL) --synth $(GHDL_FLAGS) --out=verilog ElectronFpga_core > $@.tmp
 	mv $@.tmp $@
 
+# sys/'s video_calc (hps_io.sv) and sync_fix (sys_top.v), for --vcheck
+$(GEN)/sys_video_calc.sv: ../sys/hps_io.sv ../sys/sys_top.v Makefile
+	@mkdir -p $(GEN)
+	sed -n '/^module video_calc/,/^endmodule/p' ../sys/hps_io.sv | \
+		sed -E '/^[[:space:]]*reg /s/ = 0([,;])/\1/g' > $@
+	sed -n '/^module sync_fix/,/^endmodule/p' ../sys/sys_top.v >> $@
+
 # --- Verilator -------------------------------------------------------------
 TOP = --top-module emu
 
@@ -46,7 +57,7 @@ TOP = --top-module emu
 V_DEFINE = +define+SIMULATION=1 +1364-2005ext+v +1800-2017ext+sv \
 	--timescale-override 1ps/1ps \
 	-Wno-fatal -Wno-WIDTH -Wno-TIMESCALEMOD -Wno-PINMISSING -Wno-CASEINCOMPLETE \
-	-Wno-UNOPTFLAT -Wno-MULTIDRIVEN
+	-Wno-UNOPTFLAT -Wno-MULTIDRIVEN -Wno-PROCASSWIRE
 
 ifeq ($(TRACE),1)
 V_DEFINE += --trace
@@ -80,7 +91,9 @@ V_SRC = \
 	$(RTL)/inflate.sv \
 	$(RTL)/uef_player.sv \
 	$(RTL)/tape.sv \
-	$(RTL)/tape_overlay.sv
+	$(RTL)/tape_overlay.sv \
+	rtl/altsyncram_sim.v ../sys/sd_card.sv ../sys/video_mixer.sv ../sys/scandoubler.v ../sys/hq2x.sv ../sys/gamma_corr.sv ../sys/video_freezer.sv \
+	$(GEN)/sys_video_calc.sv
 
 C_SRC = \
 	sim_main.cpp \
