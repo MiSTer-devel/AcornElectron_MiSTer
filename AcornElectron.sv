@@ -185,6 +185,7 @@ wire [63:0] img_size;
 wire        casdout, cas_relay;
 wire        tape_is_uef, tape_ready, tape_unpacking, tape_error, tape_wait;
 wire [24:0] tape_pos, tape_len;
+wire        tape_qtick;
 wire        tape_turbo = ~status[26] & tape_ready & cas_relay;
 localparam [4:0] TAPE_TURBO = 5'd8;
 wire  [4:0] tape_speed = tape_turbo ? TAPE_TURBO : 5'd1;
@@ -698,7 +699,8 @@ tape #(.CLK_HZ(16000000)) tape
 	.unpacking(tape_unpacking),
 	.error(tape_error),
 	.position(tape_pos),
-	.length(tape_len)
+	.length(tape_len),
+	.qtick(tape_qtick)
 );
 
 // byte requests -> sdram.sv (edge-triggered rd/we, `ready` when done)
@@ -745,30 +747,39 @@ wire [7:0] o_r;
 wire [7:0] o_g;
 wire [7:0] o_b;
 
-//overlay  #( .RGB(24'hEEEE22) ) overlay
-overlay  #( .RGB(24'hFFFFFF) ) overlay
+// Tape status bar (rtl/tape_overlay.sv, tape-standard.md rules 19-24):
+// "TAPE > m:ss/ m:ss x8" and a progress bar, bottom left, while the relay
+// is on. OSD Tape overlay (P2) turns it off.
+wire [42:0] tape_status_word;
+wire        tape_status_req, tape_status_ack;
+
+tape_status tape_status
 (
-	.reset(reset),
-	.i_r({r,r}),
-	.i_g({g,g}),
-	.i_b({b,b}),
+	.clk(clk_sys),
+	.loaded(tape_ready),
+	.playing(cas_relay),
+	.fast(tape_turbo),
+	.qtick(tape_qtick),
+	.position(tape_pos),
+	.length(tape_len),
+	.timed(~tape_is_uef),
+	.status(tape_status_word),
+	.req(tape_status_req),
+	.ack(tape_status_ack)
+);
 
-	.i_clk(clk_64/*clk_sys*/),
-	.i_pix(ce_pix2),
-	
-	.hcnt(h_cnt[9:0]),
-	.vcnt(v_cnt),
-	
-	.o_r(o_r),
-	.o_g(o_g),
-	.o_b(o_b),
-	
-	.pos(tape_pos),
-	.max(tape_len),
-	.tape_data(tmem_dout),
-
-	
-	.ena(cas_relay & show_cas_overlay)
+tape_overlay #(.FACTOR(TAPE_TURBO[3:0])) tape_overlay
+(
+	.clk(CLK_VIDEO),
+	.ce_pix(ce_pix2),
+	.hblank(hblank),
+	.vblank(vblank),
+	.enable(show_cas_overlay),
+	.status(tape_status_word),
+	.req(tape_status_req),
+	.ack(tape_status_ack),
+	.rgb_in({r, r, g, g, b, b}),
+	.rgb_out({o_r, o_g, o_b})
 );
 
 

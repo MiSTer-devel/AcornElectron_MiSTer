@@ -16,13 +16,27 @@ Look for the ELK version of the beeb.mb and put it on the sdcard as boot.vhd
 
 ## Cassette Operation
 
-Type Ctrl-F10 and boot into a prompt (not the MMC). Load a tape through the OSD, then type:
+The core starts in the MMC game menu (OSD Advanced: Autoboot). Press F10
+(f0, the menu's EXIT) for the BASIC prompt, or set Autoboot Off. Load a
+`.uef` or `.cas` file with the OSD Tape row, then type:
 
 ```
 *TAPE
 CHAIN""
 ```
-That will start the tape loader.
+
+Most games load with `CHAIN""`; a few say `*RUN` on their inlay.
+
+- **Tape speed** (Machine page): `8x` (default) or `Normal`. While the
+  cassette motor runs, the tape and the machine run 8 times faster, so the
+  loader sees exactly what it expects; the moment the motor stops, the
+  machine is back at normal speed.
+- **Tape status bar** (Video page: Tape overlay): while the motor runs, the
+  bottom-left corner shows `TAPE > elapsed/ total x8` and a progress bar.
+  Times are tape time (1200 baud), so a 3:42 tape loads in under 30 s at 8x.
+- **Rewind tape** (Machine page) goes back to the start; loading a new
+  tape always starts at the start.
+- Gzipped UEFs (as in the Stairway to Hell archive) load as they are.
 
 
 ## Notes from David Wood:

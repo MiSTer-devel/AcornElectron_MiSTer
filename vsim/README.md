@@ -3,7 +3,7 @@
 ```bash
 cd vsim
 make                 # GHDL converts the VHDL core, then Verilator builds obj_dir/Vemu
-./regression.sh      # 29 tests: boot, joysticks, resets, F-keys, CPU speed, MODE 0-6, tapes (~4 min, parallel; tapes need ../software)
+./regression.sh      # 32 tests: boot, joysticks, resets, F-keys, CPU speed, MODE 0-6, tapes (~4 min, parallel; tapes need ../software)
 ./obj_dir/Vemu       # GUI (ImGui window)
 ./obj_dir/Vemu --help
 ```
@@ -24,7 +24,7 @@ Run from this directory: `$readmemh` opens `ELK.hex` (made from `../roms/ELK.mif
   altsyncram main RAM. Keep the VHDL GHDL-clean: instantiate entities with
   `entity work.x`, and don't name instances after Verilog keywords.
 - One 16 MHz clock (`clk_sys`): video modes 00/01 need nothing else. The
-  cassette overlay (64 MHz), ADC tape input and SD card are not in the sim yet.
+  tape status bar runs on clk_sys here; ADC tape input and SD card are not in the sim yet.
 - `sim/` is the shared MiSTer sim library (from BasicMasterJr_MiSTer/vsim).
   `sim_bus.cpp` is patched so `ioctl_addr` = file size after a download, like
   hps_io since Template 7768007.
@@ -41,7 +41,7 @@ Run from this directory: `$readmemh` opens `ELK.hex` (made from `../roms/ELK.mif
 | `--key-hold` / `--key-gap` | fields per key / between keys (default 3/3) |
 | `--joy` / `--joy2 <frame>:<hex>` | buttons: bit 0 right, 1 left, 2 down, 3 up, 4 Fire |
 | `--analog` / `--analog2 <frame>:<x>,<y>` | analog stick, signed -127..127 |
-| `--swap-joysticks`, `--interlaced`, `--tape-monitor` | OSD settings |
+| `--swap-joysticks`, `--interlaced`, `--tape-monitor`, `--no-tape-overlay` | OSD settings |
 | `--cpu-speed <0\|1\|2>` | OSD CPU speed: Normal, 2 MHz, 4 MHz |
 | `--osd-break <n>` / `--osd-ctrl-break <n>` / `--osd-shift-break <n>` | OSD BREAK / Ctrl-BREAK / SHIFT-BREAK buttons |
 | `--autoboot` | OSD Autoboot On (SHIFT-BREAK 300 ms after power-on; Off by default in the sim) |

@@ -41,7 +41,8 @@ module uef_player #(parameter CLK_HZ = 16000000)
 
 	output reg        cas_out = 0,     // the tape signal
 	output reg        at_end = 0,      // all chunks played
-	output     [24:0] position         // read pointer (for a status display)
+	output     [24:0] position,        // read pointer (for a status display)
+	output            qtick            // one clock per quantum of tape time played
 );
 
 assign position = mem_addr;
@@ -69,6 +70,7 @@ reg [15:0] base_freq = 1200;
 reg [24:0] acc = 0;
 wire [24:0] inc = {base_freq, 2'b00} * speed;   // 4 x f x N quanta per second
 wire       tick = motor && (acc + inc >= CLK_HZ);
+assign     qtick = tick && wv_busy && !w_go;   // the tape moved by one quantum (1/4800 s at 1200 Hz)
 
 always @(posedge clk) begin
 	if (motor) acc <= tick ? acc + inc - CLK_HZ : acc + inc;

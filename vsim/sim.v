@@ -13,7 +13,8 @@
 //    * one 16 MHz clock (clk_sys = clk_16). vid_mode 00/01 only use that;
 //      the 24/32/33/40 MHz inputs are tied low (Mode 7 / SVGA are off).
 //    * the tape memory is a behavioural 4 MB array instead of SDRAM
-//    * no cassette overlay (it runs on clk_64), no ADC tape input
+//    * the tape status bar runs on clk_sys (AcornElectron.sv: clk_64 with a
+//      1-in-4 pixel enable; same pixels); no ADC tape input
 //    * no SD card yet: SDMISO idles high, MMFS sees no card
 //    * CE_PIXEL is every clk_sys: the ULA's pixel clock is 16 MHz
 //============================================================================
@@ -36,6 +37,7 @@ module emu (
 	input             autoboot,         // OSD status[24] Autoboot (On = 1 here)
 	input             tape_rewind,      // OSD status[15] Rewind tape
 	input             tape_monitor,     // OSD status[13]
+	input             tape_overlay_off, // OSD status[14] Tape overlay Off
 	input             tape_fast,        // OSD Tape speed: Nx (status[26] = 0)
 	input       [4:0] tape_turbo_n,     // N (AcornElectron.sv: TAPE_TURBO)
 
@@ -246,9 +248,38 @@ ElectronFpga_core Electron
 	.v_cnt(v_cnt)
 );
 
-assign VGA_R = {r, r};
-assign VGA_G = {g, g};
-assign VGA_B = {b, b};
+// Tape status bar (rtl/tape_overlay.sv), as AcornElectron.sv
+wire [42:0] tape_status_word;
+wire        tape_status_req, tape_status_ack;
+
+tape_status tape_status
+(
+	.clk(clk_sys),
+	.loaded(tape_ready),
+	.playing(cas_relay),
+	.fast(tape_turbo),
+	.qtick(tape_qtick),
+	.position(tape_pos),
+	.length(tape_len),
+	.timed(~tape_is_uef),
+	.status(tape_status_word),
+	.req(tape_status_req),
+	.ack(tape_status_ack)
+);
+
+tape_overlay #(.FACTOR(4'd8)) tape_overlay
+(
+	.clk(clk_sys),
+	.ce_pix(1'b1),
+	.hblank(hblank),
+	.vblank(vblank),
+	.enable(~tape_overlay_off),
+	.status(tape_status_word),
+	.req(tape_status_req),
+	.ack(tape_status_ack),
+	.rgb_in({r, r, g, g, b, b}),
+	.rgb_out({VGA_R, VGA_G, VGA_B})
+);
 assign VGA_HS = hs;
 assign VGA_VS = vs;
 assign VGA_HB = hblank;
@@ -275,6 +306,7 @@ reg         tmem_ack = 0;
 reg   [7:0] tmem_dout;
 wire        tape_is_uef, tape_ready, tape_unpacking, tape_error;
 wire [24:0] tape_pos, tape_len;
+wire        tape_qtick;
 wire        tape_turbo = tape_fast & tape_ready & cas_relay;
 wire  [4:0] tape_speed = tape_turbo ? tape_turbo_n : 5'd1;
 reg   [7:0] tape_mem[0:4194303];
@@ -317,7 +349,8 @@ tape #(.CLK_HZ(16000000)) tape
 	.unpacking(tape_unpacking),
 	.error(tape_error),
 	.position(tape_pos),
-	.length(tape_len)
+	.length(tape_len),
+	.qtick(tape_qtick)
 );
 
 // ------------------------------------------------------------------- debug

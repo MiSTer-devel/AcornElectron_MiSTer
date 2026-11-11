@@ -90,6 +90,15 @@ if [ -f $SW/mister11/tapes/Boxer_E.zip ] && [ -f $SW/free/0xC0DE6502/machine-aut
 	$SIM --headless --key-hold 2 --key-gap 2 --tape $SW/free/0xC0DE6502/machine-auto-detect-releases/machine-auto-detect.uef \
 		--tape-frame 100 --tape-turbo 8 --send-keys '120:*TAPE\nCHAIN""\n' --screenshot 700 --screenshot-dir "$OUT" \
 		--screenshot-prefix tape_mad --stop-at-frame 700 > "$OUT/tape_mad.log" 2>&1 &
+	# Tape status bar mid-load (field 700, relay on, 8x): "TAPE > 1:18/ 3:42 x8"
+	# for Main's bit stream; the raw UEF has no total ("TAPE > 1:18 x8");
+	# OSD Tape overlay Off hides it.
+	for v in on off uef; do
+		case $v in on) T="$OUT/Boxer_main.bin"; X=;; off) T="$OUT/Boxer_main.bin"; X=--no-tape-overlay;; uef) T="$OUT/Boxer_gz.uef"; X=;; esac
+		$SIM --headless --key-hold 2 --key-gap 2 --tape "$T" --tape-frame 100 --tape-turbo 8 $X \
+			--send-keys '120:*TAPE\nCHAIN""\n' --screenshot 700 --screenshot-dir "$OUT" \
+			--screenshot-prefix tape_bar_$v --stop-at-frame 700 > "$OUT/tape_bar_$v.log" 2>&1 &
+	done
 	# Flappy Bird (0xC0DE): a BASIC loader *LOADs the game. The MOS clears the
 	# tape interrupt with &40 to &FE05 per byte; that must not page out ROM 12
 	# (the Plus 1 latch ignores writes with bits 4-7 set), or the return into
@@ -148,6 +157,9 @@ if [ $TAPES = 1 ]; then
 	shot_check tape_boxer_main ffb8fb706f11f961 "tape: Boxer as Main sends it (bit stream) at 8x to title"
 	shot_check tape_boxer ffb8fb706f11f961 "tape: gzipped Boxer UEF (core gunzip) at 8x to title"
 	shot_check tape_mad   8ea90fc274b9c1e5 "tape: MAD UEF at 8x (Detected: 5)"
+	shot_check tape_bar_on  81685b913388fe7d "tape status bar: bit stream, 1:18/ 3:42 x8"
+	shot_check tape_bar_off 6791ada3343a9b31 "tape status bar: Tape overlay Off"
+	shot_check tape_bar_uef bbc04f980f638feb "tape status bar: raw UEF, elapsed only"
 	shot_check tape_flappy 34cf42aaefe431af "tape: Flappy Bird (*LOAD from BASIC, ROM 12 kept paged) to attract screen"
 else
 	echo "SKIP  tapes (no ../software)"

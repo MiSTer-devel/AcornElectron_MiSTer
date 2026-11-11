@@ -44,7 +44,8 @@ module tape #(parameter CLK_HZ = 16000000, parameter [24:0] OUT_BASE = 25'h08000
 	output reg        unpacking = 0,
 	output reg        error = 0,      // bad gzip data
 	output     [24:0] position,       // for the status display
-	output     [24:0] length
+	output     [24:0] length,
+	output            qtick           // one clock per quantum (1/4800 s) of tape played
 );
 
 // ------------------------------------------------------------ load / unpack
@@ -101,7 +102,7 @@ uef_player #(.CLK_HZ(CLK_HZ)) uef_player
 	.start_addr(is_uef ? data_base + 25'd12 : data_base), .end_addr(data_base + data_len),
 	.motor(motor), .speed(speed), .raw(!is_uef),
 	.mem_req(uef_req), .mem_addr(uef_addr), .mem_ack(uef_ack), .mem_data(rd_data),
-	.cas_out(uef_out), .at_end(uef_end), .position(uef_pos)
+	.cas_out(uef_out), .at_end(uef_end), .position(uef_pos), .qtick(qtick)
 );
 
 assign ready = (tstate == T_PLAY);

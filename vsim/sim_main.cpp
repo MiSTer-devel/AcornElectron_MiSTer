@@ -439,6 +439,7 @@ static int parse_args(int argc, char **argv) {
 		else if (a == "--tape-frame") opt_tape_frame = atoi(next().c_str());
 		else if (a == "--tape-rewind") opt_tape_rewind.push_back(atoi(next().c_str()));
 		else if (a == "--tape-monitor") top->tape_monitor = 1;
+		else if (a == "--no-tape-overlay") top->tape_overlay_off = 1;
 		else if (a == "--tape-turbo") { top->tape_fast = 1; top->tape_turbo_n = atoi(next().c_str()) & 31; }
 		else if (a == "--reset-at-frame") opt_reset_frames.push_back(atoi(next().c_str()));
 		else if (a == "--dump-ram") {
