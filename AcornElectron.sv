@@ -47,7 +47,7 @@ wire [1:0] ar = status[9:8];
 // Status bits kept from the old menu: 3-5 Scandoubler Fx, 8-9 Aspect ratio,
 // 10 Swap joysticks, 12 Tape input, 13 Tape audio, 14 Tape overlay (1 = Off),
 // 15 Rewind tape. New: 16-17 CPU speed, 18 Interlace, 19-20 Scale,
-// 22 BREAK, 23 Ctrl-BREAK.
+// 22 BREAK, 23 Ctrl-BREAK, 24 Autoboot (1 = Off), 25 SHIFT-BREAK.
 `include "build_id.v" 
 parameter CONF_STR = {
 	"AcornElectron;;",
@@ -71,6 +71,7 @@ parameter CONF_STR = {
 	"P1T[15],Rewind tape;",
 	"P1T[22],BREAK;",
 	"P1T[23],Ctrl-BREAK;",
+	"P1T[25],SHIFT-BREAK (boot);",
 
 	"P2O[18],Interlace,Off,On;",
 	"P2-;",
@@ -84,6 +85,7 @@ parameter CONF_STR = {
 
 	"P4O[13],Tape audio,Off,On;",
 
+	"P5O[24],Autoboot,On,Off;",
 	"P5O[12],Tape input,File,ADC;",
 
 	"JA,Fire;",
@@ -199,15 +201,18 @@ wire [1:0] cpu_speed = (cfg[17:16] == 2'd0) ? 2'b01 :   // Normal: 2 MHz ROM, 1 
                        (cfg[17:16] == 2'd1) ? 2'b10 :   // 2 MHz, no contention
                                               2'b11;    // 4 MHz
 
-wire osd_break, osd_ctrl;
+wire osd_break, osd_ctrl, osd_shift;
 electron_osd_buttons osd_buttons
 (
 	.clk(clk_sys),
 	.reset(reset),
+	.autoboot(~status[24]),
 	.btn_break(status[22]),
 	.btn_ctrl_break(status[23]),
+	.btn_shift_break(status[25]),
 	.osd_break(osd_break),
-	.osd_ctrl(osd_ctrl)
+	.osd_ctrl(osd_ctrl),
+	.osd_shift(osd_shift)
 );
 
 hps_io #(.CONF_STR(CONF_STR)) hps_io
@@ -400,6 +405,7 @@ ElectronFpga_core Electron
 	.hard_reset_n(~reset),
 	.osd_break(osd_break),
 	.osd_ctrl(osd_ctrl),
+	.osd_shift(osd_shift),
 	.cpu_speed(cpu_speed),
 
 	.ps2_key(ps2_key),

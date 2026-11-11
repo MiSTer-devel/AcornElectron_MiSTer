@@ -1,7 +1,7 @@
 #!/bin/bash
 # Acorn Electron sim regression. Run from vsim/ after `make`.
 #   ./regression.sh            run all tests
-#   ./regression.sh --update   print the boot hash to paste in as the new golden
+#   ./regression.sh --update   also print the screen hashes, to paste in as new goldens
 # Screenshots go to out/regression/ for eyeballing.
 set -u
 cd "$(dirname "$0")"
@@ -9,6 +9,7 @@ SIM=./obj_dir/Vemu
 OUT=out/regression
 mkdir -p "$OUT"
 FAIL=0
+UPDATE=; [ "${1:-}" = "--update" ] && UPDATE=1
 
 pass() { echo "PASS  $1"; }
 fail() { echo "FAIL  $1"; FAIL=1; }
@@ -55,6 +56,13 @@ for k in break ctrl por; do
 		--stop-at-frame 450 > "$OUT/reset_$k.log" &
 done
 
+# SHIFT-BREAK and Autoboot run MMFS's boot; the sim has no SD card, so MMFS
+# prints "Card?" (the plain boot screen has no "Card?").
+$SIM --headless --osd-shift-break 120 --stop-at-frame 250 --screenshot 250 --screenshot-dir "$OUT" \
+	--screenshot-prefix shift_break > "$OUT/shift_break.log" &
+$SIM --headless --autoboot --stop-at-frame 150 --screenshot 150 --screenshot-dir "$OUT" \
+	--screenshot-prefix autoboot > "$OUT/autoboot.log" &
+
 # --- 5. PC F1 = FUNC+1 (f1): *KEY1 then F1 runs the string ----------------
 $SIM --headless --key-hold 2 --key-gap 2 --send-keys '110:*KEY1?&77=42\n' --send-keys '250:\f1\n' \
 	--peek 450:77 --stop-at-frame 450 > "$OUT/fkey.log" &
@@ -96,6 +104,13 @@ hc=$(awk '/^SCREENSHOT/ {print $6}' "$OUT/reset_ctrl.log")
 hp=$(awk '/^SCREENSHOT/ {print $6}' "$OUT/reset_por.log")
 [ "$hc" = "$hp" ] && pass "Ctrl-BREAK = power-on screen ($hc)" || fail "Ctrl-BREAK $hc != power-on $hp ($OUT/reset_*_0450.png)"
 [ "$hb" != "$hp" ] && pass "BREAK is warm ($hb)" || fail "BREAK gave the cold-start screen"
+shot_check() {   # log golden label
+	local h; h=$(awk '/^SCREENSHOT/ {print $6}' "$OUT/$1.log")
+	[ "${UPDATE:-}" ] && echo "$1 FBHASH $h"
+	[ "$h" = "$2" ] && pass "$3 ($h)" || fail "$3: got '$h' want $2 ($OUT/$1_*.png)"
+}
+shot_check shift_break 8e7a54ac4af27b7b "SHIFT-BREAK boots (Card?)"
+shot_check autoboot    c3f63c738653f105 "Autoboot boots (Card?)"
 peek_check fkey "2A" "F1 = FUNC+1"
 peek_check speed0 "90" "CPU speed Normal (cs)"
 peek_check speed1 "67" "CPU speed 2 MHz (cs)"

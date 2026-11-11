@@ -32,6 +32,8 @@ module emu (
 	input       [1:0] osd_cpu_speed,    // OSD status[17:16] CPU speed (latched at reset)
 	input             btn_break,        // OSD status[22] BREAK
 	input             btn_ctrl_break,   // OSD status[23] Ctrl-BREAK
+	input             btn_shift_break,  // OSD status[25] SHIFT-BREAK
+	input             autoboot,         // OSD status[24] Autoboot (On = 1 here)
 	input             tape_rewind,      // OSD status[15] Rewind tape
 	input             tape_monitor,     // OSD status[13]
 
@@ -78,15 +80,18 @@ reg [1:0] cfg_speed;
 always @(posedge clk_sys) if (reset) begin cfg_interlace <= vid_interlaced; cfg_speed <= osd_cpu_speed; end
 wire [1:0] cpu_speed = (cfg_speed == 2'd0) ? 2'b01 : (cfg_speed == 2'd1) ? 2'b10 : 2'b11;
 
-wire osd_break, osd_ctrl;
+wire osd_break, osd_ctrl, osd_shift;
 electron_osd_buttons osd_buttons
 (
 	.clk(clk_sys),
 	.reset(reset),
+	.autoboot(autoboot),
 	.btn_break(btn_break),
 	.btn_ctrl_break(btn_ctrl_break),
+	.btn_shift_break(btn_shift_break),
 	.osd_break(osd_break),
-	.osd_ctrl(osd_ctrl)
+	.osd_ctrl(osd_ctrl),
+	.osd_shift(osd_shift)
 );
 
 // ------------------------------------------------------------------ memory
@@ -184,6 +189,7 @@ ElectronFpga_core Electron
 	.hard_reset_n(~reset),
 	.osd_break(osd_break),
 	.osd_ctrl(osd_ctrl),
+	.osd_shift(osd_shift),
 	.cpu_speed(cpu_speed),
 	.ps2_key(ps2_key),
 

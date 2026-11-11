@@ -56,30 +56,45 @@ assign fb_joy = { pjoy1[4],                     // fire
 endmodule
 
 
-// OSD BREAK / Ctrl-BREAK (trigger buttons). BREAK is held for the first
-// 50 ms; for Ctrl-BREAK CTRL is held for 300 ms, so the MOS still sees it
-// after BREAK is released. Times assume a 16 MHz clk.
+// OSD BREAK / Ctrl-BREAK / SHIFT-BREAK (trigger buttons) and Autoboot.
+// BREAK is held for the first 50 ms; CTRL or SHIFT is held for 300 ms, so the
+// MOS still sees it after BREAK is released (CTRL: cold start, SHIFT: run
+// the disk's !BOOT). Autoboot presses SHIFT-BREAK 300 ms after a power-on
+// reset (MMFS only boots on SHIFT-BREAK, not on SHIFT held at power-on).
+// Times assume a 16 MHz clk.
 module electron_osd_buttons
 (
 	input             clk,
-	input             reset,
+	input             reset,           // power-on reset
+	input             autoboot,        // OSD Autoboot
 	input             btn_break,       // OSD T bits (level, rising edge acts)
 	input             btn_ctrl_break,
+	input             btn_shift_break,
 	output reg        osd_break = 0,
-	output reg        osd_ctrl = 0
+	output reg        osd_ctrl = 0,
+	output reg        osd_shift = 0
 );
 
-reg  [1:0] old_t;
+reg  [2:0] old_t;
 reg [22:0] cnt = 0;
+reg [22:0] boot_wait = 0;
+
+wire auto_shift_break = (boot_wait == 23'd1);
 
 always @(posedge clk) begin
-	old_t <= {btn_ctrl_break, btn_break};
+	old_t <= {btn_shift_break, btn_ctrl_break, btn_break};
 	if (cnt) cnt <= cnt - 1'd1;
+	if (boot_wait) boot_wait <= boot_wait - 1'd1;
 	osd_break <= cnt > 23'd4000000;   // 4.8M down to 4.0M: 50 ms
-	if (!cnt) osd_ctrl <= 0;
-	if (btn_break      & ~old_t[0]) begin cnt <= 23'd4800000; osd_ctrl <= 0; end
-	if (btn_ctrl_break & ~old_t[1]) begin cnt <= 23'd4800000; osd_ctrl <= 1; end
-	if (reset) begin cnt <= 0; osd_ctrl <= 0; end
+	if (!cnt) begin osd_ctrl <= 0; osd_shift <= 0; end
+	if (btn_break       & ~old_t[0]) begin cnt <= 23'd4800000; osd_ctrl <= 0; osd_shift <= 0; end
+	if (btn_ctrl_break  & ~old_t[1]) begin cnt <= 23'd4800000; osd_ctrl <= 1; osd_shift <= 0; end
+	if ((btn_shift_break & ~old_t[2]) | auto_shift_break)
+	                                 begin cnt <= 23'd4800000; osd_ctrl <= 0; osd_shift <= 1; end
+	if (reset) begin
+		cnt <= 0; osd_ctrl <= 0; osd_shift <= 0;
+		boot_wait <= autoboot ? 23'd4800000 : 23'd0;   // 300 ms after the reset ends
+	end
 end
 
 endmodule

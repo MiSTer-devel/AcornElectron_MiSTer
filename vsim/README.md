@@ -43,7 +43,8 @@ Run from this directory: `$readmemh` opens `ELK.hex` (made from `../roms/ELK.mif
 | `--analog` / `--analog2 <frame>:<x>,<y>` | analog stick, signed -127..127 |
 | `--swap-joysticks`, `--interlaced`, `--tape-monitor` | OSD settings |
 | `--cpu-speed <0\|1\|2>` | OSD CPU speed: Normal, 2 MHz, 4 MHz |
-| `--osd-break <n>` / `--osd-ctrl-break <n>` | OSD BREAK / Ctrl-BREAK buttons |
+| `--osd-break <n>` / `--osd-ctrl-break <n>` / `--osd-shift-break <n>` | OSD BREAK / Ctrl-BREAK / SHIFT-BREAK buttons |
+| `--autoboot` | OSD Autoboot On (SHIFT-BREAK 300 ms after power-on; Off by default in the sim) |
 | `--rom <file>` | 112 KB ROM image (ELK.mif layout) loaded at power-on |
 | `--tape <file>` / `--tape-frame <n>` / `--tape-rewind <n>` | OSD tape load / Stop & Rewind |
 | `--reset-at-frame <n>` | power-on reset (OSD Apply and reset) |

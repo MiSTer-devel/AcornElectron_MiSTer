@@ -87,7 +87,7 @@ static std::vector<std::pair<int, std::string>> opt_peeks;   // frame, "addr[,ad
 static int reset_hold = 0;
 static int pulse_cycles = 0;
 static int osd_pulse_cycles = 0;
-static std::vector<int> opt_osd_break, opt_osd_ctrl_break;
+static std::vector<int> opt_osd_break, opt_osd_ctrl_break, opt_osd_shift_break;
 static bool last_relay = false;
 static unsigned joy_mask[2] = { 0, 0 };
 
@@ -132,7 +132,7 @@ static inline void step() {
 	bool rom_queued = bus.HasQueue();
 	if (reset_hold > 0) reset_hold--;
 	top->reset_in = (main_time < (vluint64_t)initial_reset) || reset_hold > 0 || rom_queued;
-	if (osd_pulse_cycles > 0 && --osd_pulse_cycles == 0) { top->btn_break = 0; top->btn_ctrl_break = 0; }
+	if (osd_pulse_cycles > 0 && --osd_pulse_cycles == 0) { top->btn_break = 0; top->btn_ctrl_break = 0; top->btn_shift_break = 0; }
 
 	tick();
 }
@@ -263,6 +263,7 @@ static bool on_frame(int frame) {
 	for (int r : opt_reset_frames) if (r == frame) { printf("FRAME %d: reset\n", frame); reset_hold = 2000; }
 	for (int f : opt_osd_break) if (f == frame) { printf("FRAME %d: OSD BREAK\n", frame); top->btn_break = 1; osd_pulse_cycles = 64; }
 	for (int f : opt_osd_ctrl_break) if (f == frame) { printf("FRAME %d: OSD Ctrl-BREAK\n", frame); top->btn_ctrl_break = 1; osd_pulse_cycles = 64; }
+	for (int f : opt_osd_shift_break) if (f == frame) { printf("FRAME %d: OSD SHIFT-BREAK\n", frame); top->btn_shift_break = 1; osd_pulse_cycles = 64; }
 	for (auto &j : joy_events) if (j.frame == frame) joy_mask[j.stick] = j.mask;
 	top->joystick_0 = joy_mask[0];
 	top->joystick_1 = joy_mask[1];
@@ -326,6 +327,8 @@ static void usage() {
 	printf("  --cpu-speed <0|1|2>           OSD CPU speed: Normal, 2 MHz, 4 MHz\n");
 	printf("  --osd-break <n>               OSD BREAK button at field n. Repeatable\n");
 	printf("  --osd-ctrl-break <n>          OSD Ctrl-BREAK button at field n. Repeatable\n");
+	printf("  --osd-shift-break <n>         OSD SHIFT-BREAK button at field n. Repeatable\n");
+	printf("  --autoboot                    OSD Autoboot: On (SHIFT held at power-on; default Off in the sim)\n");
 	printf("  --rom <file>                  Load a 112 KB ROM image (ELK.mif layout) at power-on\n");
 	printf("  --tape <file>                 Load a tape (OSD F2) at --tape-frame (default 0)\n");
 	printf("  --tape-frame <n>\n");
@@ -390,6 +393,8 @@ static int parse_args(int argc, char **argv) {
 		else if (a == "--cpu-speed") top->osd_cpu_speed = atoi(next().c_str()) & 3;
 		else if (a == "--osd-break") opt_osd_break.push_back(atoi(next().c_str()));
 		else if (a == "--osd-ctrl-break") opt_osd_ctrl_break.push_back(atoi(next().c_str()));
+		else if (a == "--osd-shift-break") opt_osd_shift_break.push_back(atoi(next().c_str()));
+		else if (a == "--autoboot") top->autoboot = 1;
 		else if (a == "--rom") opt_rom = next();
 		else if (a == "--tape") opt_tape = next();
 		else if (a == "--tape-frame") opt_tape_frame = atoi(next().c_str());

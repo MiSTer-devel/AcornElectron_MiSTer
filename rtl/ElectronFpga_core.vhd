@@ -104,6 +104,7 @@ entity ElectronFpga_core is
 		  -- OSD buttons (active high): BREAK; CTRL held (with BREAK: Ctrl-BREAK)
 		  osd_break     : in std_logic := '0';
 		  osd_ctrl      : in std_logic := '0';
+		  osd_shift     : in std_logic := '0';
 		  h_cnt: out std_logic_vector(10  downto 0);
 		  v_cnt: out std_logic_vector( 9  downto 0)
 
@@ -254,7 +255,8 @@ begin
         row        => cpu_a(13 downto 0),
         break      => key_break,
         ext_break  => osd_break,
-        ext_ctrl   => osd_ctrl
+        ext_ctrl   => osd_ctrl,
+        ext_shift  => osd_shift
     );
 
     cpu_NMI_n      <= '1';

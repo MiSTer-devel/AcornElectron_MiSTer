@@ -14,7 +14,8 @@ entity keyboard is
         break      : out std_logic;
         -- OSD buttons (active high): BREAK, and CTRL held for Ctrl-BREAK
         ext_break  : in  std_logic := '0';
-        ext_ctrl   : in  std_logic := '0'
+        ext_ctrl   : in  std_logic := '0';
+        ext_shift  : in  std_logic := '0'
         );
 end entity;
 
@@ -82,7 +83,7 @@ begin
         end if;
     end process;
 
-    process(keys, fdigit, ffunc, ext_ctrl)
+    process(keys, fdigit, ffunc, ext_ctrl, ext_shift)
         variable k : key_matrix;
     begin
         k := keys;
@@ -99,6 +100,9 @@ begin
         end if;
         if ext_ctrl = '1' then
             k(13)(2) := '0';
+        end if;
+        if ext_shift = '1' then
+            k(13)(3) := '0';
         end if;
         keys_out <= k;
     end process;
