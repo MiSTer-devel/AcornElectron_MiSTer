@@ -161,9 +161,11 @@ begin
     ula : entity work.ElectronULA
     generic map (
         IncludeMMC       => true,
-        Include32KRAM    => false,
-        IncludeVGA       => true,
-        IncludeJafaMode7 => IncludeJafaMode7
+        Include32KRAM    => true,
+        IncludeVGA       => false,  -- MiSTer: 15 kHz only, the scaler does the rest
+        IncludeJafaMode7 => IncludeJafaMode7,
+        LimitROMSpeed    => true,   -- turbo modes: ROM at most 2 MHz
+        LimitIOSpeed     => true    -- turbo modes: IO (and the MMC VIA) at 1 MHz
     )
     port map (
         clk_16M00 => clk_16M00,

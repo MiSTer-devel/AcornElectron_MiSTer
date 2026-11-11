@@ -28,7 +28,7 @@ module emu (
 	input      [15:0] joystick_l_analog_0, // signed Y [15:8], X [7:0]
 	input      [15:0] joystick_l_analog_1,
 	input             swap_joysticks,   // OSD status[10]
-	input             vid_progressive,  // vid_mode 01 instead of 00
+	input             vid_interlaced,   // vid_mode 01 (interlaced) instead of 00
 	input             tape_rewind,      // OSD status[15] Stop & Rewind
 	input             tape_monitor,     // OSD status[13]
 
@@ -193,7 +193,7 @@ ElectronFpga_core Electron
 	.cassette_in(casdout),
 	.cassette_out(),
 
-	.vid_mode({1'b0, vid_progressive}),
+	.vid_mode({1'b0, vid_interlaced}),
 
 	.test(),
 	.avr_RxD(1'b1),

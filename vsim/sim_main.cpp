@@ -40,8 +40,8 @@ SimBus bus(console);
 SimInput input(13, console);
 
 // ULA picture: 640 active pixels at 16 MHz, 256 lines per field (text modes
-// 250). The ULA's 15 kHz modes are interlaced (vid_mode 00): one sim "frame"
-// is one 50 Hz field.
+// 250). vid_mode 00 is 312-line progressive, 01 interlaced (312/313-line
+// fields with the same picture): one sim "frame" is one 50 Hz field.
 #define VGA_WIDTH  640
 #define VGA_HEIGHT 256
 SimVideo video(VGA_WIDTH, VGA_HEIGHT, 0);
@@ -311,7 +311,7 @@ static void usage() {
 	printf("  --analog <frame>:<x>,<y>      Stick 1 analog, signed -127..127\n");
 	printf("  --analog2 <frame>:<x>,<y>     Stick 2 analog\n");
 	printf("  --swap-joysticks              OSD Swap Joysticks: Yes\n");
-	printf("  --progressive                 vid_mode 01 (15 kHz non-interlaced)\n");
+	printf("  --interlaced                  vid_mode 01 (15 kHz interlaced; default 00 is progressive)\n");
 	printf("  --rom <file>                  Load a 112 KB ROM image (ELK.mif layout) at power-on\n");
 	printf("  --tape <file>                 Load a tape (OSD F2) at --tape-frame (default 0)\n");
 	printf("  --tape-frame <n>\n");
@@ -372,7 +372,7 @@ static int parse_args(int argc, char **argv) {
 			analog_events.push_back({ fr, a == "--analog2" ? 1 : 0, x, y });
 		}
 		else if (a == "--swap-joysticks") top->swap_joysticks = 1;
-		else if (a == "--progressive") top->vid_progressive = 1;
+		else if (a == "--interlaced") top->vid_interlaced = 1;
 		else if (a == "--rom") opt_rom = next();
 		else if (a == "--tape") opt_tape = next();
 		else if (a == "--tape-frame") opt_tape_frame = atoi(next().c_str());

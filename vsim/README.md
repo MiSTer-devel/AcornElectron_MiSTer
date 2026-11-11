@@ -40,7 +40,7 @@ Run from this directory: `$readmemh` opens `ELK.hex` (made from `../roms/ELK.mif
 | `--key-hold` / `--key-gap` | fields per key / between keys (default 3/3) |
 | `--joy` / `--joy2 <frame>:<hex>` | buttons, bit 4 = Fire |
 | `--analog` / `--analog2 <frame>:<x>,<y>` | analog stick, signed -127..127 |
-| `--swap-joysticks`, `--progressive`, `--tape-monitor` | OSD settings |
+| `--swap-joysticks`, `--interlaced`, `--tape-monitor` | OSD settings |
 | `--rom <file>` | 112 KB ROM image (ELK.mif layout) loaded at power-on |
 | `--tape <file>` / `--tape-frame <n>` / `--tape-rewind <n>` | OSD tape load / Stop & Rewind |
 | `--reset-at-frame <n>` | reset pulse |

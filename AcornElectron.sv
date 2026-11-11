@@ -394,8 +394,8 @@ ElectronFpga_core Electron
    //     -- 10 - SVGA - 50Hz
    //     -- 11 - SVGA - 60Hz
 	//.vid_mode(2'b11)
-	.vid_mode(2'b00), // interlaced
-	//.vid_mode(2'b01) // non interlaced
+	.vid_mode(2'b00), // 15 kHz non-interlaced (01 = interlaced)
+	//.vid_mode(2'b01) // 15 kHz interlaced
 //	.vid_mode(status[8:7])
 	
 

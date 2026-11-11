@@ -39,6 +39,18 @@ plus1_run idle
 plus1_run fire1+sticks --joy 100:10 --analog 100:100,-50 --analog2 100:-100,60
 plus1_run fire2        --joy2 100:10
 plus1_run swapped      --swap-joysticks --joy 100:10 --analog 100:100,-50 --analog2 100:-100,60
+# --- 3. MODE 0-6: print 50 lines so the screen scrolls through the hardware
+# wrap (MODE 5 base &5800: upstream 3892b4ee; wrap: 572fb0d7/53b64b7a).
+# Cursor off so the hash does not depend on the blink phase.
+MODE_GOLDEN=(   # index = MODE
+	[0]=4dc25105100e5a8e [1]=e8ad84fc163e228f [2]=de87472437fca0a7 [3]=1c65b8e7324f0a6e
+	[4]=c777a81ae473c827 [5]=6df731bfdb804c53 [6]=7e9ccc3ba881dedd)
+for m in 0 1 2 3 4 5 6; do
+	$SIM --headless --key-hold 2 --key-gap 2 \
+		--send-keys "110:MODE$m:VDU23,1,0;0;0;0;:FORI=1TO50:PRINTI;\" MODE$m\":NEXT\n" \
+		--stop-at-frame 1050 --screenshot 1050 --screenshot-dir "$OUT" --screenshot-prefix mode$m \
+		> "$OUT/mode$m.log" &
+done
 wait
 
 h=$(awk '/^SCREENSHOT/ {print $6}' "$OUT/boot.log")
@@ -48,6 +60,11 @@ plus1_check idle         "BF 7F 7F 7F 7F"
 plus1_check fire1+sticks "9F 1B B1 E3 43"
 plus1_check fire2        "AF 7F 7F 7F 7F"
 plus1_check swapped      "AF E3 43 1B B1"
+for m in 0 1 2 3 4 5 6; do
+	h=$(awk '/^SCREENSHOT/ {print $6}' "$OUT/mode$m.log")
+	[ "${1:-}" = "--update" ] && echo "mode$m FBHASH $h"
+	[ "$h" = "${MODE_GOLDEN[$m]}" ] && pass "MODE $m scroll ($h)" || fail "MODE $m scroll: got '$h' want ${MODE_GOLDEN[$m]} ($OUT/mode${m}_1050.png)"
+done
 
 echo
 [ $FAIL = 0 ] && echo "ALL PASS" || echo "SOME TESTS FAILED"
