@@ -287,12 +287,12 @@ assign VGA_VB = vblank;
 assign CE_PIXEL = 1'b1;
 
 // ------------------------------------------------------------------- audio
-// Same as AcornElectron.sv (unbalanced on purpose until the audio fix lands).
+// Same as AcornElectron.sv.
 
-wire [11:0] sound = {12{audio_snl}};
-wire [15:0] sound_pad = {1'b0, sound[11:8], sound[7] ^ (tape_monitor ? casdout : 1'b0), sound[6:0], 3'b0};
-assign AUDIO_L = sound_pad;
-assign AUDIO_R = {16{audio_snr}};
+wire [15:0] snd_level  = audio_snl ? 16'h1800 : 16'hE800;   // as AcornElectron.sv (AUDIO_S = 1)
+wire [15:0] tape_level = ~tape_monitor ? 16'h0000 : casdout ? 16'h0600 : 16'hFA00;
+assign AUDIO_L = snd_level + tape_level;
+assign AUDIO_R = snd_level + tape_level;
 
 // -------------------------------------------------------------------- tape
 // The same rtl/tape.sv as AcornElectron.sv; a 4 MB array with an SDRAM-like

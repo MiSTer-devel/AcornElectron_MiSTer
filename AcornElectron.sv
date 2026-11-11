@@ -87,6 +87,7 @@ parameter CONF_STR = {
 	"P5O[24],Autoboot,On,Off;",
 	"P5O[12],Tape input,File,ADC;",
 
+	"I,Tape ready (rewound),Tape format not supported;",
 	"JA,Fire;",
 	"V,v",`BUILD_DATE
 };
@@ -186,6 +187,8 @@ wire        casdout, cas_relay;
 wire        tape_is_uef, tape_ready, tape_unpacking, tape_error, tape_wait;
 wire [24:0] tape_pos, tape_len;
 wire        tape_qtick;
+reg         tape_info_req = 0;   // OSD info message (below)
+reg   [7:0] tape_info = 0;
 wire        tape_turbo = ~status[26] & tape_ready & cas_relay;
 localparam [4:0] TAPE_TURBO = 5'd8;
 wire  [4:0] tape_speed = tape_turbo ? TAPE_TURBO : 5'd1;
@@ -247,6 +250,8 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.ioctl_addr(ioctl_addr),
 	.ioctl_dout(ioctl_dout),
 	.ioctl_wait(tape_wait),
+	.info_req(tape_info_req),
+	.info(tape_info),
 
 	.sd_lba(sd_lba),
 	.sd_rd(sd_rd),
@@ -473,14 +478,20 @@ ElectronFpga_core Electron
 	.copro_mode(|status[6:5])*/
 );
 
+// Audio: the ULA's 1-bit square wave, the same on both channels, signed
+// around 0 at 3/16 of full scale (was full scale on R, issue #1). OSD Tape
+// audio adds the tape signal at a quarter of that. sys DC-blocks the
+// output, so a held level is silent.
 wire  audio_snl,audio_snr;
-wire [11:0] sound = {12{audio_snl}};
-wire [15:0] sound_pad =  {1'b0,sound[11:8], sound[7] ^ (status[13] ? (status[12] ? adc_cassette_bit : casdout) : 1'b0), sound[6:0], 3'b0};
+wire        tape_bit   = status[12] ? adc_cassette_bit : casdout;
+wire [15:0] snd_level  = audio_snl ? 16'h1800 : 16'hE800;            // +/- 0x1800
+wire [15:0] tape_level = ~status[13] ? 16'h0000 : tape_bit ? 16'h0600 : 16'hFA00;
+wire [15:0] audio_mix  = snd_level + tape_level;
 
-assign AUDIO_L = sound_pad;
-assign AUDIO_R = {16{audio_snr}};
+assign AUDIO_L = audio_mix;
+assign AUDIO_R = audio_mix;
 assign AUDIO_MIX = 0;
-assign AUDIO_S = 0;
+assign AUDIO_S = 1;
 
 wire hs, vs, hblank, vblank, ce_pix, clk_sel;
 wire [3:0] r,g,b;
@@ -702,6 +713,18 @@ tape #(.CLK_HZ(16000000)) tape
 	.length(tape_len),
 	.qtick(tape_qtick)
 );
+
+// OSD info message when a tape has loaded (tape-standard.md rule 5): 1 "Tape
+// ready (rewound)" (every new tape starts at its start), 2 "Tape format not
+// supported" (bad gzip data).
+always @(posedge clk_sys) begin
+	reg old_ready = 0, old_error = 0;
+	reg [3:0] hold = 0;
+	old_ready <= tape_ready; old_error <= tape_error;
+	if (hold) hold <= hold - 1'd1; else tape_info_req <= 0;
+	if (tape_ready & ~old_ready) begin tape_info <= 8'd1; tape_info_req <= 1; hold <= 4'd15; end
+	if (tape_error & ~old_error) begin tape_info <= 8'd2; tape_info_req <= 1; hold <= 4'd15; end
+end
 
 // byte requests -> sdram.sv (edge-triggered rd/we, `ready` when done)
 wire [15:0] sdram_dout;
