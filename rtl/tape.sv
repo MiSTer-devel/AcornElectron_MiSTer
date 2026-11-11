@@ -6,7 +6,9 @@
 //  2. If it starts with the gzip magic (1F 8B), rtl/inflate.sv unpacks it
 //     to OUT_BASE (UEF files are usually gzipped).
 //  3. "UEF File!" + NUL: rtl/uef_player.sv plays the chunks. Anything else
-//     is treated as a .cas bit stream and played by rtl/cassette.v as before.
+//     is a bit stream (a .cas file, or a .uef that Main_MiSTer has already
+//     converted: Main does that for this core, support/uef/uef_reader.cpp),
+//     played by the same player in raw mode. Turbo works for both.
 //
 //  The memory port takes one request at a time (mem_req, held until
 //  mem_ack); all users of it run in turn, never together.
@@ -37,7 +39,8 @@ module tape #(parameter CLK_HZ = 16000000, parameter [24:0] OUT_BASE = 25'h08000
 	input       [7:0] mem_dout,
 
 	output            cas_out,        // tape signal to the ULA
-	output reg        is_uef = 0,     // the loaded tape is a UEF (turbo applies)
+	output reg        is_uef = 0,     // the tape data is UEF chunks (else a bit stream)
+	output            ready,          // a tape is loaded and playing / ready to play
 	output reg        unpacking = 0,
 	output reg        error = 0,      // bad gzip data
 	output     [24:0] position,       // for the status display
@@ -79,41 +82,31 @@ inflate inflate
 	.out_count(inf_count)
 );
 
-// players
-wire        uef_req, cas_rd;
-wire [24:0] uef_addr, cas_addr;
+// player: UEF chunks, or a bit stream from address 0
+reg play_d = 0;
+always @(posedge clk) play_d <= (tstate == T_PLAY);
+
+wire        uef_req;
+wire [24:0] uef_addr;
 reg         uef_ack = 0;
 reg   [7:0] rd_data;
-wire        uef_out, cas_bit;
+wire        uef_out;
 wire        uef_end;
 wire [24:0] uef_pos;
 
 uef_player #(.CLK_HZ(CLK_HZ)) uef_player
 (
 	.clk(clk), .reset(reset),
-	.rewind(rewind || tstate != T_PLAY || !is_uef),
-	.start_addr(data_base + 25'd12), .end_addr(data_base + data_len),
-	.motor(motor), .speed(speed),
+	.rewind(rewind || !play_d),   // one clock after T_PLAY, so is_uef is settled
+	.start_addr(is_uef ? data_base + 25'd12 : data_base), .end_addr(data_base + data_len),
+	.motor(motor), .speed(speed), .raw(!is_uef),
 	.mem_req(uef_req), .mem_addr(uef_addr), .mem_ack(uef_ack), .mem_data(rd_data),
 	.cas_out(uef_out), .at_end(uef_end), .position(uef_pos)
 );
 
-// the original player for .cas bit streams (reads from address 0)
-cassette cassette
-(
-	.clk(clk),
-	.rewind(rewind | load),
-	.en(motor && tstate == T_PLAY && !is_uef),
-	.sdram_addr(cas_addr),
-	.sdram_data(rd_data),
-	.sdram_rd(cas_rd),
-	.tape_end(data_len - 1'd1),
-	.data(cas_bit),
-	.status()
-);
-
-assign cas_out  = is_uef ? uef_out : cas_bit;
-assign position = is_uef ? uef_pos - data_base : cas_addr;
+assign ready = (tstate == T_PLAY);
+assign cas_out  = uef_out;
+assign position = uef_pos - data_base;
 assign length   = data_len;
 
 // ------------------------------------------------------------ memory users
@@ -125,7 +118,6 @@ reg  [1:0] who;                 // 0 download, 1 inflate in, 2 inflate out, 3 pl
 reg        dl_pend = 0, out_pend = 0, in_pend = 0, uef_pend = 0;
 reg  [7:0] dl_byte, out_byte;
 reg [24:0] dl_addr;
-reg        old_cas_rd;
 
 assign ioctl_wait = dl_pend | (load & ioctl_wr);   // hold the next byte until this one is written
 
@@ -135,7 +127,6 @@ always @(posedge clk) begin
 	inf_out_ready <= 0;
 	uef_ack       <= 0;
 	old_load      <= load;
-	old_cas_rd    <= cas_rd;
 
 	// --- collect requests
 	if (load && ioctl_wr) begin dl_pend <= 1; dl_byte <= ioctl_dout; dl_addr <= ioctl_addr; size <= ioctl_addr + 1'd1; end
@@ -156,11 +147,8 @@ always @(posedge clk) begin
 		else if (in_pend) begin
 			mem_req <= 1; mem_we <= 0; mem_addr <= inf_in_ptr; who <= 1; busy <= 1;
 		end
-		else if (tstate == T_PLAY && is_uef && uef_pend) begin
+		else if (tstate == T_PLAY && uef_pend) begin
 			mem_req <= 1; mem_we <= 0; mem_addr <= uef_addr; who <= 3; busy <= 1;
-		end
-		else if (tstate == T_PLAY && !is_uef && cas_rd && !old_cas_rd) begin
-			mem_req <= 1; mem_we <= 0; mem_addr <= cas_addr; who <= 3; busy <= 1;
 		end
 	end
 	if (mem_ack) begin
@@ -169,7 +157,7 @@ always @(posedge clk) begin
 			0: dl_pend <= 0;
 			1: begin in_pend <= 0; inf_in_valid <= 1; inf_in_data <= mem_dout; inf_in_ptr <= inf_in_ptr + 1'd1; end
 			2: begin out_pend <= 0; inf_out_ready <= 1; end
-			default: begin rd_data <= mem_dout; uef_ack <= is_uef; uef_pend <= 0; end
+			default: begin rd_data <= mem_dout; uef_ack <= 1; uef_pend <= 0; end
 		endcase
 	end
 

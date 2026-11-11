@@ -16,6 +16,11 @@
 //
 //  The tape only moves while `motor` is on (the ULA's cassette relay).
 //  `rewind` goes back to the first chunk.
+//
+//  raw = 1: the memory holds a plain bit stream instead (a .cas file, or what
+//  Main_MiSTer sends for a .uef: it converts UEFs itself for this core,
+//  support/uef/uef_reader.cpp): one tape bit per bit, first bit in the MSB,
+//  each bit played as a data bit (1 = two carrier cycles, 0 = one slow cycle).
 //============================================================================
 
 module uef_player #(parameter CLK_HZ = 16000000)
@@ -27,6 +32,7 @@ module uef_player #(parameter CLK_HZ = 16000000)
 	input      [24:0] end_addr,        // first byte after the file
 	input             motor,
 	input       [4:0] speed,           // 1 = real time, N = N times faster
+	input             raw,             // bit stream instead of UEF chunks
 
 	output reg        mem_req = 0,     // one-clock read request
 	output reg [24:0] mem_addr = 0,
@@ -107,7 +113,8 @@ localparam [4:0]
 	P_END = 0, P_CHUNK = 1, P_HDR = 2, P_SKIP = 3,
 	P_DATA = 4, P_PACK = 5, P_BITS = 6, P_ARGS = 7, P_D104_HDR = 8,
 	P_111_BITS = 9, P_SEC_HDR = 10, P_SEC = 11,
-	P_FETCH = 12, P_FETCH_WAIT = 13, P_WAVE = 14;
+	P_FETCH = 12, P_FETCH_WAIT = 13, P_WAVE = 14,
+	P_RAW = 15, P_RAW_LOAD = 16, P_RAW_BITS = 17;
 
 reg  [4:0] p_state = P_END, p_ret, p_wret;
 reg  [7:0] fbyte;          // the byte just fetched
@@ -292,11 +299,25 @@ always @(posedge clk) begin
 		end
 	end
 
+	// ---- raw bit stream: 8 bits per byte, MSB first
+	P_RAW: fetch(P_RAW_LOAD);
+	P_RAW_LOAD: begin
+		bits <= {3'b000, fbyte[0], fbyte[1], fbyte[2], fbyte[3], fbyte[4], fbyte[5], fbyte[6], fbyte[7]};
+		nbits <= 8;
+		p_state <= P_RAW_BITS;
+	end
+	P_RAW_BITS: if (nbits == 0) p_state <= P_RAW;
+	            else begin
+		bits <= bits >> 1; nbits <= nbits - 1'd1;
+		if (bits[0]) wave(W_CYC, 1'b1, 32'd2, P_RAW_BITS);
+		else         wave(W_CYC, 1'b0, 32'd1, P_RAW_BITS);
+	end
+
 	default: p_state <= P_END;
 	endcase
 
 	if (reset || rewind) begin
-		p_state <= P_CHUNK; mem_addr <= start_addr; at_end <= 0;
+		p_state <= raw ? P_RAW : P_CHUNK; mem_addr <= start_addr; at_end <= 0;
 		base_freq <= 1200; slow_baud <= 0; w_go <= 0;
 	end
 end

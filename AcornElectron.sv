@@ -183,9 +183,9 @@ wire [63:0] img_size;
 
 // tape (instance further down)
 wire        casdout, cas_relay;
-wire        tape_is_uef, tape_unpacking, tape_error, tape_wait;
+wire        tape_is_uef, tape_ready, tape_unpacking, tape_error, tape_wait;
 wire [24:0] tape_pos, tape_len;
-wire        tape_turbo = ~status[26] & tape_is_uef & cas_relay;
+wire        tape_turbo = ~status[26] & tape_ready & cas_relay;
 localparam [4:0] TAPE_TURBO = 5'd8;
 wire  [4:0] tape_speed = tape_turbo ? TAPE_TURBO : 5'd1;
 
@@ -660,8 +660,10 @@ end
 
 wire locked;
 
-// Tape: download -> (gunzip) -> UEF player or .cas player (rtl/tape.sv).
-// OSD Tape speed (P1): the UEF plays TAPE_TURBO times faster while the
+// Tape: download -> (gunzip) -> UEF or bit-stream player (rtl/tape.sv).
+// Main_MiSTer converts .uef files to a bit stream itself for this core, so
+// on MiSTer a .uef arrives like a .cas; raw UEF data plays too.
+// OSD Tape speed (P1): the tape plays TAPE_TURBO times faster while the
 // motor runs, the ULA's tape receiver counts that much faster, and the CPU
 // runs at 4 MHz to keep up; the machine is back to normal when the motor
 // stops (tape-standard.md).
@@ -692,6 +694,7 @@ tape #(.CLK_HZ(16000000)) tape
 	.mem_dout(tmem_dout),
 	.cas_out(casdout),
 	.is_uef(tape_is_uef),
+	.ready(tape_ready),
 	.unpacking(tape_unpacking),
 	.error(tape_error),
 	.position(tape_pos),

@@ -271,9 +271,9 @@ wire [24:0] tmem_addr;
 wire  [7:0] tmem_din;
 reg         tmem_ack = 0;
 reg   [7:0] tmem_dout;
-wire        tape_is_uef, tape_unpacking, tape_error;
+wire        tape_is_uef, tape_ready, tape_unpacking, tape_error;
 wire [24:0] tape_pos, tape_len;
-wire        tape_turbo = tape_fast & tape_is_uef & cas_relay;
+wire        tape_turbo = tape_fast & tape_ready & cas_relay;
 wire  [4:0] tape_speed = tape_turbo ? tape_turbo_n : 5'd1;
 reg   [7:0] tape_mem[0:4194303];
 reg   [2:0] tmem_delay = 0;
@@ -311,6 +311,7 @@ tape #(.CLK_HZ(16000000)) tape
 	.mem_dout(tmem_dout),
 	.cas_out(casdout),
 	.is_uef(tape_is_uef),
+	.ready(tape_ready),
 	.unpacking(tape_unpacking),
 	.error(tape_error),
 	.position(tape_pos),

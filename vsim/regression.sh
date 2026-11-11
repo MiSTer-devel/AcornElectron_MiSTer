@@ -68,8 +68,11 @@ $SIM --headless --key-hold 2 --key-gap 2 --send-keys '110:*KEY1?&77=42\n' --send
 	--peek 450:77 --stop-at-frame 450 > "$OUT/fkey.log" &
 
 # --- 7. tapes (local software/ only; skipped without it) --------------------
-# Boxer: the original gzipped UEF from the STH zip (download -> gunzip ->
-# UEF player) at 8x turbo, CHAIN"" to the title screen. MAD (0xC0DE's Machine
+# Boxer as the core gets it on MiSTer: Main_MiSTer converts .uef files to a
+# bit stream for this core (tools/main_uef2bits.py does the same), played
+# in raw mode at 8x. And the original gzipped UEF from the STH zip through
+# the core's own gunzip + UEF player (raw UEF data), also 8x, CHAIN"" to the
+# title screen. MAD (0xC0DE's Machine
 # Auto Detect, plain UEF) at 8x: prints "Detected: 5" (the MAME timing).
 SW=../software
 TAPES=0
@@ -77,6 +80,10 @@ if [ -f $SW/mister11/tapes/Boxer_E.zip ] && [ -f $SW/free/0xC0DE6502/machine-aut
 	TAPES=1
 	python3 -I -c "import zipfile,sys; z=zipfile.ZipFile(sys.argv[1]); open(sys.argv[2],'wb').write(z.read('Boxer_E.uef'))" \
 		$SW/mister11/tapes/Boxer_E.zip "$OUT/Boxer_gz.uef"
+	python3 -I tools/main_uef2bits.py "$OUT/Boxer_gz.uef" "$OUT/Boxer_main.bin" > /dev/null
+	$SIM --headless --key-hold 2 --key-gap 2 --tape "$OUT/Boxer_main.bin" --tape-frame 100 --tape-turbo 8 \
+		--send-keys '120:*TAPE\nCHAIN""\n' --screenshot 1900 --screenshot-dir "$OUT" \
+		--screenshot-prefix tape_boxer_main --stop-at-frame 1900 > "$OUT/tape_boxer_main.log" 2>&1 &
 	$SIM --headless --key-hold 2 --key-gap 2 --tape "$OUT/Boxer_gz.uef" --tape-frame 100 --tape-turbo 8 \
 		--send-keys '120:*TAPE\nCHAIN""\n' --screenshot 1700 --screenshot-dir "$OUT" \
 		--screenshot-prefix tape_boxer --stop-at-frame 1700 > "$OUT/tape_boxer.log" 2>&1 &
@@ -131,7 +138,8 @@ shot_check shift_break 8e7a54ac4af27b7b "SHIFT-BREAK boots (Card?)"
 shot_check autoboot    c3f63c738653f105 "Autoboot boots (Card?)"
 peek_check fkey "2A" "F1 = FUNC+1"
 if [ $TAPES = 1 ]; then
-	shot_check tape_boxer ffb8fb706f11f961 "tape: gzipped Boxer UEF at 8x to title"
+	shot_check tape_boxer_main ffb8fb706f11f961 "tape: Boxer as Main sends it (bit stream) at 8x to title"
+	shot_check tape_boxer ffb8fb706f11f961 "tape: gzipped Boxer UEF (core gunzip) at 8x to title"
 	shot_check tape_mad   8ea90fc274b9c1e5 "tape: MAD UEF at 8x (Detected: 5)"
 else
 	echo "SKIP  tapes (no ../software)"
