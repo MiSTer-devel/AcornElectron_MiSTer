@@ -22,7 +22,7 @@ entity ElectronFpga_core is
     generic (
         IncludeICEDebugger : boolean := false;
         IncludeABRRegs     : boolean := false;
-        IncludeJafaMode7   : boolean := false
+        IncludeJafaMode7   : boolean := true    -- MiSTer: Jafa Mode 7 (6845 + SAA5050, ROM in slot 15)
     );
     port (
         -- Clocks
@@ -48,6 +48,8 @@ entity ElectronFpga_core is
         video_hsync    : out std_logic;
 		  video_hblank   : out std_logic;
 		  video_vblank   : out std_logic;
+        video_mode7    : out std_logic;   -- Mode 7 picture: 12 MHz pixels (clk_24M00 domain RGB)
+        video_field    : out std_logic;   -- interlace field (VGA_F1)
         -- Audio
         audio_l        : out std_logic;
         audio_r        : out std_logic;
@@ -76,8 +78,8 @@ entity ElectronFpga_core is
         cassette_out   : out std_logic;
 
         -- Format of Video
-        -- 00 - sRGB - interlaced
-        -- 01 - sRGB - non interlaced
+        -- 00 - sRGB - non interlaced
+        -- 01 - sRGB - interlaced
         -- 10 - SVGA - 50Hz
         -- 11 - SVGA - 60Hz
         vid_mode       : in  std_logic_vector(1 downto 0);
@@ -90,6 +92,15 @@ entity ElectronFpga_core is
         avr_TxD        : out   std_logic;
 
         cpu_addr       : out   std_logic_vector(15 downto 0);
+        -- MiSTer: expansion bus for devices outside the core (rtl/plus3.sv):
+        -- the CPU's address is cpu_addr; exp_en = 1 puts exp_din on the bus
+        exp_cpu_dout   : out   std_logic_vector(7 downto 0);
+        exp_cpu_rnw    : out   std_logic;
+        exp_cpu_clken  : out   std_logic;   -- one clock at the end of each CPU cycle
+        exp_din        : in    std_logic_vector(7 downto 0) := x"FF";
+        exp_en         : in    std_logic := '0';
+        -- sim debug: DO, R_W_n, Sync, Enable, DI (unused in the MiSTer top)
+        cpu_dbg        : out   std_logic_vector(18 downto 0);
 		  
 		  joystick1_x   : in std_logic_vector(7 downto 0);
 		  joystick1_y   : in std_logic_vector(7 downto 0);
@@ -97,6 +108,16 @@ entity ElectronFpga_core is
 		  joystick2_x   : in std_logic_vector(7 downto 0);
 		  joystick2_y   : in std_logic_vector(7 downto 0);
 		  joystick2_fire   : in std_logic;
+		  -- First Byte joystick: active high, 0 up, 1 down, 2 left, 3 right, 4 fire
+		  fb_joy        : in std_logic_vector(4 downto 0) := (others => '0');
+		  -- CPU speed (ULA turbo): 00 1 MHz, 01 Normal, 10 2 MHz, 11 4 MHz
+		  cpu_speed     : in std_logic_vector(1 downto 0) := "01";
+		  -- OSD buttons (active high): BREAK; CTRL held (with BREAK: Ctrl-BREAK)
+		  osd_break     : in std_logic := '0';
+		  osd_ctrl      : in std_logic := '0';
+		  osd_shift     : in std_logic := '0';
+		  -- turbo tape: the tape plays N times faster (1 = real time)
+		  tape_speed    : in std_logic_vector(4 downto 0) := "00001";
 		  h_cnt: out std_logic_vector(10  downto 0);
 		  v_cnt: out std_logic_vector( 9  downto 0)
 
@@ -108,6 +129,7 @@ architecture behavioral of ElectronFpga_core is
     signal RSTn              : std_logic;
     signal cpu_R_W_n         : std_logic;
     signal cpu_a             : std_logic_vector (23 downto 0);
+    signal cpu_sync          : std_logic;
     signal cpu_din           : std_logic_vector (7 downto 0);
     signal cpu_dout          : std_logic_vector (7 downto 0);
     signal cpu_IRQ_n         : std_logic;
@@ -118,14 +140,15 @@ architecture behavioral of ElectronFpga_core is
     signal ula_enable        : std_logic;
 
     signal key_break         : std_logic;
-    signal key_turbo         : std_logic_vector(1 downto 0);
     signal sound             : std_logic;
     signal kbd_data          : std_logic_vector(3 downto 0);
 
     signal cpu_clken         : std_logic;
     signal cpu_clken_r       : std_logic;
 
-    signal rom_latch         : std_logic_vector(3 downto 0);
+    signal rom_latch         : std_logic_vector(3 downto 0);   -- the ROM that is paged in
+    signal ula_rom_latch     : std_logic_vector(3 downto 0);   -- the ULA's own page register
+    signal exp_rom_latch     : std_logic_vector(3 downto 0) := (others => '0');  -- expansion (Plus 1) page register
 
     signal ext_enable        : std_logic;
 
@@ -149,7 +172,7 @@ begin
             IRQ_n           => cpu_IRQ_n,
             NMI_n           => cpu_NMI_n,
             R_W_n           => cpu_R_W_n,
-            Sync            => open,
+            Sync            => cpu_sync,
             A               => cpu_a,
             DI              => cpu_din,
             DO              => cpu_dout
@@ -161,9 +184,11 @@ begin
     ula : entity work.ElectronULA
     generic map (
         IncludeMMC       => true,
-        Include32KRAM    => false,
-        IncludeVGA       => true,
-        IncludeJafaMode7 => IncludeJafaMode7
+        Include32KRAM    => true,
+        IncludeVGA       => false,  -- MiSTer: 15 kHz only, the scaler does the rest
+        IncludeJafaMode7 => IncludeJafaMode7,
+        LimitROMSpeed    => false,  -- 4 MHz: ROM (BASIC, MOS) at 4 MHz too
+        LimitIOSpeed     => true    -- turbo modes: IO (and the MMC VIA) at 1 MHz
     )
     port map (
         clk_16M00 => clk_16M00,
@@ -194,6 +219,8 @@ begin
         hsync     => video_hsync,
 		  hblank		=> video_hblank,
 		  vblank		=> video_vblank,
+        mode7     => video_mode7,
+        vfield    => video_field,
 
         -- Audio
         sound     => sound,
@@ -206,6 +233,7 @@ begin
 
         -- Casette
         casIn     => cassette_in,
+        tape_speed => tape_speed,
         casOut    => cassette_out,
 
         -- Keyboard
@@ -215,13 +243,15 @@ begin
         caps      => caps_led,
         motor     => motor_led,
 
-        rom_latch => rom_latch,
+        rom_latch => ula_rom_latch,
 
         mode_init => vid_mode,
 
         -- Clock Generation
         cpu_clken_out  => cpu_clken,
-        turbo          => key_turbo,
+        turbo          => cpu_speed,
+        POR_n          => hard_reset_n,
+        fb_joy         => fb_joy,
 
   		  joystick1_x   =>joystick1_x,
 		  joystick1_y  =>joystick1_y,
@@ -235,7 +265,7 @@ begin
 
     );
 
-    input : entity work.keyboard port map(
+    kbd_input : entity work.keyboard port map(
         clk        => clk_16M00,
         rst_n      => hard_reset_n, -- to avoid a loop when break pressed!
         ps2_key    => ps2_key,
@@ -243,7 +273,9 @@ begin
         col        => kbd_data,
         row        => cpu_a(13 downto 0),
         break      => key_break,
-        turbo      => key_turbo
+        ext_break  => osd_break,
+        ext_ctrl   => osd_ctrl,
+        ext_shift  => osd_shift
     );
 
     cpu_NMI_n      <= '1';
@@ -260,9 +292,29 @@ begin
                   -- Sideways RAM Access
                   (cpu_a(15 downto 14) = "10" and rom_latch(3 downto 1) /= "100") else '0';
 
-    cpu_din <= ext_Dout       when ext_enable = '1' else
+    cpu_din <= exp_din        when exp_en = '1' else
+               ext_Dout       when ext_enable = '1' else
                ula_data       when ula_enable = '1' else
                x"F1";
+
+    -- MiSTer: ROM paging as on a real machine with a Plus 1 (and as MAME).
+    -- &FE05 writes also clear interrupts (bits 4-6). The ULA takes every
+    -- write (it only cares whether its keyboard/BASIC ROMs 8-11 are paged),
+    -- but the Plus 1 and other expansions latch the ROM number only when
+    -- bits 4-7 are 0. So the MOS's interrupt clears (e.g. &40 per tape byte,
+    -- &F4FF) don't page out ROM 12 (AP2) or a sideways ROM: before this,
+    -- *LOAD from a BASIC program crashed (Flappy Bird, Stairway to Hell).
+    process(clk_16M00)
+    begin
+        if rising_edge(clk_16M00) then
+            if RSTn = '0' then
+                exp_rom_latch <= (others => '0');
+            elsif cpu_clken = '1' and cpu_R_W_n = '0' and cpu_a(15 downto 0) = x"FE05" and cpu_dout(7 downto 4) = "0000" then
+                exp_rom_latch <= cpu_dout(3 downto 0);
+            end if;
+        end if;
+    end process;
+    rom_latch <= ula_rom_latch when ula_rom_latch(3 downto 2) = "10" else exp_rom_latch;
 
     -- Pipeline external memory interface
      -- External addresses 00000-3FFFF are routed to FLASH 80000-DFFFFF
@@ -281,7 +333,9 @@ begin
             cpu_clken_r <= cpu_clken;
             if cpu_a(15) = '0' then
                 -- exteral main memory access
-                ext_A <= "1" & "000" & cpu_a(14 downto 0);
+                -- MiSTer: at RAM slots 8-9 (unused: ROMs 8-11 are the ULA's),
+                -- not 0-1, where it hid the Plus 1 cartridge ROMs 0/1
+                ext_A <= "1" & "100" & cpu_a(14 downto 0);
 					 
             elsif cpu_a(15 downto 14) = "11" then
                  -- The OS rom image lives in slot 8 as on the Elk this is where the
@@ -368,6 +422,10 @@ begin
 
 
    cpu_addr <= cpu_a(15 downto 0);
+   exp_cpu_dout  <= cpu_dout;
+   exp_cpu_rnw   <= cpu_R_W_n;
+   exp_cpu_clken <= cpu_clken;
+   cpu_dbg  <= cpu_dout & cpu_R_W_n & cpu_sync & cpu_clken & cpu_din;
 
    test <= (others => '0');
 

@@ -20,172 +20,20 @@
 
 module emu
 (
-	//Master input clock
-	input         CLK_50M,
-
-	//Async reset from top-level module.
-	//Can be used as initial reset.
-	input         RESET,
-
-	//Must be passed to hps_io module
-	inout  [48:0] HPS_BUS,
-
-	//Base video clock. Usually equals to CLK_SYS.
-	output        CLK_VIDEO,
-
-	//Multiple resolutions are supported using different CE_PIXEL rates.
-	//Must be based on CLK_VIDEO
-	output        CE_PIXEL,
-
-	//Video aspect ratio for HDMI. Most retro systems have ratio 4:3.
-	//if VIDEO_ARX[12] or VIDEO_ARY[12] is set then [11:0] contains scaled size instead of aspect ratio.
-	output [12:0] VIDEO_ARX,
-	output [12:0] VIDEO_ARY,
-
-	output  [7:0] VGA_R,
-	output  [7:0] VGA_G,
-	output  [7:0] VGA_B,
-	output        VGA_HS,
-	output        VGA_VS,
-	output        VGA_DE,    // = ~(VBlank | HBlank)
-	output        VGA_F1,
-	output [1:0]  VGA_SL,
-	output        VGA_SCALER, // Force VGA scaler
-	output        VGA_DISABLE, // analog out is off
-
-	input  [11:0] HDMI_WIDTH,
-	input  [11:0] HDMI_HEIGHT,
-	output        HDMI_FREEZE,
-	output        HDMI_BLACKOUT,
-	output        HDMI_BOB_DEINT,
-
-`ifdef MISTER_FB
-	// Use framebuffer in DDRAM
-	// FB_FORMAT:
-	//    [2:0] : 011=8bpp(palette) 100=16bpp 101=24bpp 110=32bpp
-	//    [3]   : 0=16bits 565 1=16bits 1555
-	//    [4]   : 0=RGB  1=BGR (for 16/24/32 modes)
-	//
-	// FB_STRIDE either 0 (rounded to 256 bytes) or multiple of pixel size (in bytes)
-	output        FB_EN,
-	output  [4:0] FB_FORMAT,
-	output [11:0] FB_WIDTH,
-	output [11:0] FB_HEIGHT,
-	output [31:0] FB_BASE,
-	output [13:0] FB_STRIDE,
-	input         FB_VBL,
-	input         FB_LL,
-	output        FB_FORCE_BLANK,
-
-`ifdef MISTER_FB_PALETTE
-	// Palette control for 8bit modes.
-	// Ignored for other video modes.
-	output        FB_PAL_CLK,
-	output  [7:0] FB_PAL_ADDR,
-	output [23:0] FB_PAL_DOUT,
-	input  [23:0] FB_PAL_DIN,
-	output        FB_PAL_WR,
-`endif
-`endif
-
-	output        LED_USER,  // 1 - ON, 0 - OFF.
-
-	// b[1]: 0 - LED status is system status OR'd with b[0]
-	//       1 - LED status is controled solely by b[0]
-	// hint: supply 2'b00 to let the system control the LED.
-	output  [1:0] LED_POWER,
-	output  [1:0] LED_DISK,
-
-	// I/O board button press simulation (active high)
-	// b[1]: user button
-	// b[0]: osd button
-	output  [1:0] BUTTONS,
-
-	input         CLK_AUDIO, // 24.576 MHz
-	output [15:0] AUDIO_L,
-	output [15:0] AUDIO_R,
-	output        AUDIO_S,   // 1 - signed audio samples, 0 - unsigned
-	output  [1:0] AUDIO_MIX, // 0 - no mix, 1 - 25%, 2 - 50%, 3 - 100% (mono)
-
-	//ADC
-	inout   [3:0] ADC_BUS,
-
-	//SD-SPI
-	output        SD_SCK,
-	output        SD_MOSI,
-	input         SD_MISO,
-	output        SD_CS,
-	input         SD_CD,
-
-	//High latency DDR3 RAM interface
-	//Use for non-critical time purposes
-	output        DDRAM_CLK,
-	input         DDRAM_BUSY,
-	output  [7:0] DDRAM_BURSTCNT,
-	output [28:0] DDRAM_ADDR,
-	input  [63:0] DDRAM_DOUT,
-	input         DDRAM_DOUT_READY,
-	output        DDRAM_RD,
-	output [63:0] DDRAM_DIN,
-	output  [7:0] DDRAM_BE,
-	output        DDRAM_WE,
-
-	//SDRAM interface with lower latency
-	output        SDRAM_CLK,
-	output        SDRAM_CKE,
-	output [12:0] SDRAM_A,
-	output  [1:0] SDRAM_BA,
-	inout  [15:0] SDRAM_DQ,
-	output        SDRAM_DQML,
-	output        SDRAM_DQMH,
-	output        SDRAM_nCS,
-	output        SDRAM_nCAS,
-	output        SDRAM_nRAS,
-	output        SDRAM_nWE,
-
-`ifdef MISTER_DUAL_SDRAM
-	//Secondary SDRAM
-	//Set all output SDRAM_* signals to Z ASAP if SDRAM2_EN is 0
-	input         SDRAM2_EN,
-	output        SDRAM2_CLK,
-	output [12:0] SDRAM2_A,
-	output  [1:0] SDRAM2_BA,
-	inout  [15:0] SDRAM2_DQ,
-	output        SDRAM2_nCS,
-	output        SDRAM2_nCAS,
-	output        SDRAM2_nRAS,
-	output        SDRAM2_nWE,
-`endif
-
-	input         UART_CTS,
-	output        UART_RTS,
-	input         UART_RXD,
-	output        UART_TXD,
-	output        UART_DTR,
-	input         UART_DSR,
-
-	// Open-drain User port.
-	// 0 - D+/RX
-	// 1 - D-/TX
-	// 2..6 - USR2..USR6
-	// Set USER_OUT to 1 to read from USER_IN.
-	input   [6:0] USER_IN,
-	output  [6:0] USER_OUT,
-
-	input         OSD_STATUS
+	`include "sys/emu_ports.vh"
 );
 
 
 assign USER_OUT = '1;
 assign {UART_RTS, UART_TXD, UART_DTR} = 0;
-assign {SDRAM_DQ, SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 'Z;
 assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = 0;
  
-assign LED_USER  = cas_relay| ioctl_download | (vsd_sel & sd_act);
-assign LED_DISK  = {1'b1,~vsd_sel & sd_act};
 assign LED_POWER = 0;
 
-assign VGA_F1    = 0;
+// VGA_F1: the interlace field (Mode 7, or Video: Interlace On), so the
+// scaler weaves both fields into one picture instead of bobbing each
+wire   vid_field;
+assign VGA_F1    = vid_field;
 assign BUTTONS = 0;
 
 assign VGA_DISABLE = 0;
@@ -196,33 +44,59 @@ assign HDMI_BOB_DEINT = 0;
 
 wire [1:0] ar = status[9:8];
 
-assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
-
-
-
+// OSD layout: ~/dev2/osd-standard.md, video-standard.md, tape-standard.md.
+// Status bits kept from the old menu: 3-5 Scandoubler Fx, 8-9 Aspect ratio,
+// 10 Swap joysticks, 12 Tape input, 13 Tape audio, 14 Tape overlay (1 = Off),
+// 15 Rewind tape. New: 16-17 CPU speed, 18 Interlace, 19-20 Scale,
+// 22 BREAK, 23 Ctrl-BREAK, 24 Autoboot (1 = Off), 25 SHIFT-BREAK, 26 Tape speed (1 = Normal),
+// 27 Plus 3.
 `include "build_id.v" 
 parameter CONF_STR = {
 	"AcornElectron;;",
 	"-;",
-	"S0,VHD;",
-//	"OC,Autostart,Yes,No;",
+	"SC0,VHD,Pri. disk (MMB);",
+	"H2S1,ADFADL,Floppy 0 (Plus 3);",
+	"H2S2,ADFADL,Floppy 1 (Plus 3);",
+	"H1F2,UEFCAS,Tape;",
+	"h1-;",
+	"F3,ROMBIN,Cartridge 1;",
+	"F4,ROMBIN,Cartridge 2;",
+	"F0,ROM,Load ROM;",
 	"-;",
-	"O89,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
-	"O35,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;", 
-	"OA,Swap Joysticks,No,Yes;",
+	"P1,Machine;",
+	"P2,Video;",
+	"P3,Input;",
+	"P4,Audio;",
+	"P5,Advanced;",
 	"-;",
-	"OC,Tape Input,File,ADC;",
-	"H0F2,UEF,Load Cassette;",
-	"H0TF,Stop & Rewind;",
-	"OD,Monitor Tape Sound,No,Yes;",
-	"OE,Show Tape Status,Yes,No;",
-	"-;",
-//	"O4,Model,B(MOS6502),Master(R65SC12);",
-//	"O56,Co-Processor,None,MOS65C02;",
-//	"O78,VIDEO,sRGB-interlaced,sRGB-non-interlaced,SVGA-50Hz,SVGA-60Hz;",
-	"-;",
-	"R0,Reset;",
+	"h0-,Changes pending;",
+	"R0,Apply and reset;",
+
+	"P1O[17:16],CPU speed,Normal,2 MHz,4 MHz;",
+	"P1O[27],Plus 3 (ADFS floppy),Off,On;",
+	"P1O[26],Tape speed,8x,Normal;",
+	"P1-;",
+	"P1T[15],Rewind tape;",
+	"P1T[22],BREAK;",
+	"P1T[23],Ctrl-BREAK;",
+	"P1T[25],SHIFT-BREAK (boot);",
+
+	"P2O[18],Interlace,Off,On;",
+	"P2-;",
+	"P2O[9:8],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
+	"P2O[20:19],Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer;",
+	"P2O[5:3],Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
+	"P2-;",
+	"P2O[14],Tape overlay,On,Off;",
+
+	"P3O[10],Swap joysticks,No,Yes;",
+
+	"P4O[13],Tape audio,Off,On;",
+
+	"P5O[24],Autoboot,On,Off;",
+	"P5O[12],Tape input,File,ADC;",
+
+	"I,Tape ready (rewound),Tape format not supported;",
 	"JA,Fire;",
 	"V,v",`BUILD_DATE
 };
@@ -303,21 +177,72 @@ wire        direct_video;
 wire [21:0] gamma_bus;
 
 
-wire [31:0] sd_lba[1];
-wire        sd_rd;
-wire        sd_wr;
-wire        sd_ack;
+// image slots: 0 the MMC card (boot.vhd), 1/2 the Plus 3's floppy drives 0/1
+wire [31:0] sd_lba[3];
+wire  [2:0] sd_rd;
+wire  [2:0] sd_wr;
+wire  [2:0] sd_ack;
 wire  [8:0] sd_buff_addr;
 wire  [7:0] sd_buff_dout;
-wire  [7:0] sd_buff_din[1];
+wire  [7:0] sd_buff_din[3];
 wire        sd_buff_wr;
 
-wire        img_mounted;
+wire  [2:0] img_mounted;
 wire        img_readonly;
 wire [63:0] img_size;
 
 
-hps_io #(.CONF_STR(CONF_STR)) hps_io
+// tape (instance further down)
+wire        casdout, cas_relay;
+wire        tape_is_uef, tape_ready, tape_unpacking, tape_error, tape_wait;
+wire [24:0] tape_pos, tape_len;
+wire        tape_qtick;
+reg         tape_info_req = 0;   // OSD info message (below)
+reg   [7:0] tape_info = 0;
+wire        tape_turbo = ~status[26] & tape_ready & cas_relay;
+localparam [4:0] TAPE_TURBO = 5'd8;
+wire  [4:0] tape_speed = tape_turbo ? TAPE_TURBO : 5'd1;
+
+assign LED_USER  = cas_relay | ioctl_download | tape_unpacking | (vsd_sel & sd_act);
+assign LED_DISK  = {1'b1,(~vsd_sel & sd_act) | plus3_busy};
+
+/////////////////  RESET  /////////////////////////
+
+// Power-on reset: the board's reset, OSD Apply and reset, the USER button, and
+// a ROM download (Load ROM / boot.rom). The ULA's power-on flag is set again,
+// so the MOS does a cold start. BREAK and Ctrl-BREAK are OSD buttons (P1).
+wire rom_download = ioctl_download && ioctl_index == 0;
+// OSD Cartridge 1 (index 3: ROMs 2/3) / Cartridge 2 (index 4: ROMs 0/1)
+wire [1:0] cart_download = {ioctl_download && ioctl_index == 4, ioctl_download && ioctl_index == 3};
+wire reset = RESET | status[0] | buttons[1] | rom_download | (|cart_download);
+
+// The settings the machine runs with, taken from the OSD at every reset
+// (osd-standard.md). Video scaling, input and tape monitor rows act at once
+// and read status directly.
+reg [31:0] cfg;
+always @(posedge clk_sys) if (reset) cfg <= status;
+wire pending = (status[18:16] != cfg[18:16]) || (status[27] != cfg[27]);
+wire plus3_on = cfg[27];   // Plus 3 fitted (P1 Machine, applies at reset)
+
+wire [1:0] cpu_speed = (cfg[17:16] == 2'd0) ? 2'b01 :   // Normal: 2 MHz ROM, 1 MHz contended RAM
+                       (cfg[17:16] == 2'd1) ? 2'b10 :   // 2 MHz, no contention
+                                              2'b11;    // 4 MHz
+
+wire osd_break, osd_ctrl, osd_shift;
+electron_osd_buttons osd_buttons
+(
+	.clk(clk_sys),
+	.reset(reset),
+	.autoboot(~status[24]),
+	.btn_break(status[22]),
+	.btn_ctrl_break(status[23]),
+	.btn_shift_break(status[25]),
+	.osd_break(osd_break),
+	.osd_ctrl(osd_ctrl),
+	.osd_shift(osd_shift)
+);
+
+hps_io #(.CONF_STR(CONF_STR), .VDNUM(3)) hps_io
 (
 	.clk_sys(clk_sys),
 	.HPS_BUS(HPS_BUS),
@@ -328,7 +253,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.gamma_bus(gamma_bus),
 	.direct_video(direct_video),
 
-	.status_menumask({status[12]}),
+	.status_menumask({~status[27], status[12], pending}),  // bit 1: tape input ADC hides the Tape row; bit 2: Plus 3 Off hides the floppies
 
 	.ps2_key(ps2_key),
 
@@ -337,6 +262,9 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.ioctl_wr(ioctl_wr),
 	.ioctl_addr(ioctl_addr),
 	.ioctl_dout(ioctl_dout),
+	.ioctl_wait(tape_wait),
+	.info_req(tape_info_req),
+	.info(tape_info),
 
 	.sd_lba(sd_lba),
 	.sd_rd(sd_rd),
@@ -357,147 +285,105 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.joystick_l_analog_1(joya2)
 );
 
-/////////////////  RESET  /////////////////////////
-
-wire reset = RESET | status[0] | buttons[1] ;
-
 ////////////////  MEMORY  /////////////////////////
 
-//reg m128 = 0;
-//always @(posedge clk_sys) if(reset_req) m128 <= status[4];
-
-// ELK ROM Images
-
-// The first 8 are sideways rams
-
-// 00 00xx empty     
-// 00 01xx empty     
-// 00 10xx empty     
-// 00 11xx empty     
-// 01 00xx mmfs_swram.rom         
-// 01 01xx empty     
-// 01 10xx empty     
-// 01 11xx empty     
-// 10 00xx os100.rom      
-// 10 01xx os100.rom     
-// 10 10xx Basic2.rom      
-// 10 11xx Basic2.rom      
-// 11 00xx pres_ap2_v1_23.rom     
-// 11 01xx empty     
-// 11 10xx empty
-// 11 11xx M7_191.rom    
-
-always_comb begin
-	rom_addr[13:0] = mem_addr[13:0];
-	case({mem_addr[18:14]})
-		'b0_01_00: rom_addr[16:14] =  0; //mmfs_swram.rom        
-		'b0_10_00: rom_addr[16:14] =  1; //os100.rom     
-		'b0_10_01: rom_addr[16:14] =  1; //os100.rom 
-		'b0_10_10: rom_addr[16:14] =  2; //Basic2.rom 
-		'b0_10_11: rom_addr[16:14] =  2; //Basic2.rom 
-		'b0_11_00: rom_addr[16:14] =  3; //pres_ap2_v1_23.rom      
-		'b0_11_01: rom_addr[16:14] =  4; //empty  for future use   
-		'b0_11_10: rom_addr[16:14] =  5; //empty  for future use     
-		'b0_11_11: rom_addr[16:14] =  6; //M7_191.rom          
-		  default: rom_addr[16:14] =  0;
-	endcase
-end
-
-always_comb begin
-	case({mem_addr[18:14]})
-		'b0_01_00,
-		'b0_10_00,
-		'b0_10_01,
-		'b0_10_10,
-		'b0_10_11,
-		'b0_11_00,
-		'b0_11_01,
-		'b0_11_10,
-		'b0_11_11: rom_data = rom_dout;
-		  default: rom_data = 0;
-	endcase
-end
+// The memory map is rtl/electron_mem.sv (shared with vsim/sim.v): the
+// 112 KB ROM image (Load ROM), and RAM for the Plus 1 cartridge ROMs 0-3
+// (Cartridge 1 / 2), MMFS's workspace and main RAM.
 
 wire        mem_we_n;
 wire [18:0] mem_addr;
-wire  [7:0] mem_din;
-wire  [7:0] ram_dout;
-reg  [7:0] ram_data;
+wire  [7:0] mem_din, mem_dout;
+wire [16:0] rom_a, ram_a;
+wire        rom_we, ram_we;
+wire  [7:0] rom_d, ram_d, rom_q, ram_q;
 
-reg  [17:0] ram_addr;
-reg  [16:0] rom_addr;
-wire  [7:0] rom_dout;
-reg   [7:0] rom_data;
+electron_mem electron_mem
+(
+	.clk(clk_sys),
+	.mem_addr(mem_addr), .mem_we_n(mem_we_n), .mem_din(mem_din), .mem_dout(mem_dout),
+	.plus3(plus3_on), .rom_download(rom_download), .cart_download(cart_download),
+	.ioctl_wr(ioctl_wr), .ioctl_addr(ioctl_addr), .ioctl_dout(ioctl_dout),
+	.rom_a(rom_a), .rom_we(rom_we), .rom_d(rom_d), .rom_q(rom_q),
+	.ram_a(ram_a), .ram_we(ram_we), .ram_d(ram_d), .ram_q(ram_q)
+);
 
 spram #(8, 17, 114688, "roms/ELK.mif") rom
 (
 	.clock(clk_sys),
-	.address(reset ? ioctl_addr[16:0] : rom_addr),
-	.data(ioctl_dout),
-	.wren(!ioctl_index && ioctl_wr && reset),
-	.q(rom_dout)
+	.address(rom_a),
+	.data(rom_d),
+	.wren(rom_we),
+	.q(rom_q)
 );
-
-always_comb begin
-	ram_addr[13:0] = mem_addr[13:0];
-	case({mem_addr[18:14]})
-		'b1_00_00: ram_addr[16:14] =  0; //swram        
-		'b1_00_01: ram_addr[16:14] =  1; //swram     
-		'b1_00_10: ram_addr[16:14] =  2; //swram 
-		'b1_00_11: ram_addr[16:14] =  3; //swram 
-		'b1_01_00: ram_addr[16:14] =  4; //mmfs_swram.ram 
-		'b1_01_01: ram_addr[16:14] =  5; //swram     
-		'b1_01_10: ram_addr[16:14] =  6; //swram   
-		'b1_01_11: ram_addr[16:14] =  7; //swram           
-		  default: ram_addr[16:14] =  0;
-	endcase
-end
-
-always_comb begin
-	case({mem_addr[18:14]})
-		'b1_00_00,
-		'b1_00_01,
-		'b1_00_10,
-		'b1_00_11,
-		'b1_01_00,
-		'b1_01_01,
-		'b1_01_10,
-		'b1_01_11: ram_data = ram_dout;
-		  default: ram_data = 0;
-	endcase
-end
 
 spram #(8, 17, 131072) ram
 (
 	.clock(clk_sys),
-	.address(ram_addr),
-	.data(mem_din),
-	.wren(mem_addr[18] & old_we & ~mem_we_n),
-	.q(ram_dout)
+	.address(ram_a),
+	.data(ram_d),
+	.wren(ram_we),
+	.q(ram_q)
 );
-
-reg old_we;
-always @(posedge clk_sys) old_we <= mem_we_n;
 
 ///////////////////////////////////////////////////
 
 wire reset_req;
 
-wire [9:0] center_joystick_y1   =  8'd128 + joya1[15:8];
-wire [9:0] center_joystick_x1   =  8'd128 + joya1[7:0];
-wire [9:0] center_joystick_y2   =  8'd128 + joya2[15:8];
-wire [9:0] center_joystick_x2   =  8'd128 + joya2[7:0];
-
-wire [31:0] acorn_joy1 = status[10] ? joy2 : joy1;
-wire [31:0] acorn_joy2 = status[10] ? joy1 : joy2;
-
-wire [15:0] acorn_ajoy1 = status[10] ? { (8'hFF - center_joystick_y2[7:0]),(8'hFF - center_joystick_x2[7:0])} : {(8'hFF - center_joystick_y1[7:0]),(8'hFF - center_joystick_x1[7:0])};
-wire [15:0] acorn_ajoy2 = status[10] ? {(8'hFF - center_joystick_y1[7:0]),(8'hFF - center_joystick_x1[7:0])} : {(8'hFF - center_joystick_y2[7:0]),(8'hFF - center_joystick_y2[7:0])};
-
+// Joysticks -> Plus 1 ADC / fire and First Byte (rtl/electron_input.sv)
+wire [7:0] adc1_x, adc1_y, adc2_x, adc2_y;
+wire       fire1, fire2;
+wire [4:0] fb_joy;
+electron_joy electron_joy
+(
+	.joy1(joy1), .joy2(joy2), .joya1(joya1), .joya2(joya2),
+	.swap(status[10]),
+	.adc1_x(adc1_x), .adc1_y(adc1_y), .adc2_x(adc2_x), .adc2_y(adc2_y),
+	.fire1(fire1), .fire2(fire2),
+	.fb_joy(fb_joy)
+);
 
 wire show_cas_overlay = ~status[14];
 
 // analog -127..+127, Y: [15:8], X: [7:0]
+
+// Plus 3: WD1770 floppy interface at &FCC0-&FCC7 (rtl/plus3.sv), drives on
+// image slots 1 and 2; its ADFS ROM is ROM 13 (electron_mem).
+wire  [7:0] exp_cpu_dout, plus3_dout;
+wire        exp_cpu_rnw, exp_cpu_clken, plus3_sel, plus3_busy;
+wire [15:0] cpu_addr;
+wire [31:0] p3_lba[2];
+wire  [7:0] p3_buff_din[2];
+assign sd_lba[1] = p3_lba[0];
+assign sd_lba[2] = p3_lba[1];
+assign sd_buff_din[1] = p3_buff_din[0];
+assign sd_buff_din[2] = p3_buff_din[1];
+
+plus3 #(.CLK_HZ(16000000)) plus3
+(
+	.clk(clk_sys),
+	.reset(reset),
+	.enable(plus3_on),
+	.addr(cpu_addr),
+	.din(exp_cpu_dout),
+	.rnw(exp_cpu_rnw),
+	.clken(exp_cpu_clken),
+	.dout(plus3_dout),
+	.sel(plus3_sel),
+	.img_mounted(img_mounted[2:1]),
+	.img_readonly(img_readonly),
+	.img_size(img_size),
+	.sd_lba(p3_lba),
+	.sd_rd(sd_rd[2:1]),
+	.sd_wr(sd_wr[2:1]),
+	.sd_ack(sd_ack[2:1]),
+	.sd_buff_addr(sd_buff_addr),
+	.sd_buff_dout(sd_buff_dout),
+	.sd_buff_din(p3_buff_din),
+	.sd_buff_wr(sd_buff_wr),
+	.busy(plus3_busy),
+	.ctrl()
+);
 
 ElectronFpga_core Electron
 (
@@ -508,6 +394,11 @@ ElectronFpga_core Electron
 	.clk_40M00(clk_40),
 
 	.hard_reset_n(~reset),
+	.osd_break(osd_break),
+	.osd_ctrl(osd_ctrl),
+	.osd_shift(osd_shift),
+	.cpu_speed(tape_turbo ? 2'b11 : cpu_speed),   // 4 MHz while a turbo load runs
+	.tape_speed(tape_speed),
 
 	.ps2_key(ps2_key),
 
@@ -518,6 +409,8 @@ ElectronFpga_core Electron
 	.video_blue(b),
 	.video_vblank(vblank),
 	.video_hblank(hblank),
+	.video_mode7(mode7),
+	.video_field(vid_field),
 
 	.video_vsync(vs),
 	.video_hsync(hs),
@@ -528,7 +421,7 @@ ElectronFpga_core Electron
 	.ext_nOE(),
 	.ext_nWE(mem_we_n),
 	.ext_A(mem_addr),
-	.ext_Dout(mem_addr[18] ? ram_data : rom_data),
+	.ext_Dout(mem_dout),
 	.ext_Din(mem_din),
 
 	.SDMISO(sdmiso),
@@ -541,30 +434,25 @@ ElectronFpga_core Electron
 	
 	.cassette_in(status[12] ? adc_cassette_bit : casdout ),
 	.cassette_out(),
-	//     -- Format of Video
-   //     -- 00 - sRGB - interlaced
-   //     -- 01 - sRGB - non interlaced
-   //     -- 10 - SVGA - 50Hz
-   //     -- 11 - SVGA - 60Hz
-	//.vid_mode(2'b11)
-	.vid_mode(2'b00), // interlaced
-	//.vid_mode(2'b01) // non interlaced
-//	.vid_mode(status[8:7])
-	
+	// 00: 15 kHz non-interlaced (312 lines), 01: interlaced (312/313-line
+	// fields, the same picture in both). The SVGA modes are not built.
+	.vid_mode({1'b0, cfg[18]}),
 
-/*
-	.keyb_dip({4'd0, ~status[12], ~status[9:7]}),
-*/
-   // // analog -127..+127, Y: [15:8], X: [7:0]
-	.joystick1_x(    acorn_ajoy1[7:0]),
-	.joystick1_y(    acorn_ajoy1[15:8]),
-	.joystick1_fire( acorn_joy1[4]),
+	.joystick1_x(adc1_x),
+	.joystick1_y(adc1_y),
+	.joystick1_fire(fire1),
+	.joystick2_x(adc2_x),
+	.joystick2_y(adc2_y),
+	.joystick2_fire(fire2),
+	.fb_joy(fb_joy),
 
-	.joystick2_x(   acorn_ajoy2[7:0]),
-	.joystick2_y(   acorn_ajoy2[15:8]),
-	.joystick2_fire(acorn_joy2[4]),
-	
-	
+	.cpu_addr(cpu_addr),
+	.exp_cpu_dout(exp_cpu_dout),
+	.exp_cpu_rnw(exp_cpu_rnw),
+	.exp_cpu_clken(exp_cpu_clken),
+	.exp_din(plus3_dout),
+	.exp_en(plus3_sel),
+
 	.h_cnt(h_cnt),
 	.v_cnt(v_cnt)
 /*
@@ -572,27 +460,36 @@ ElectronFpga_core Electron
 	.copro_mode(|status[6:5])*/
 );
 
+// Audio: the ULA's 1-bit square wave, the same on both channels, signed
+// around 0 at 3/16 of full scale (was full scale on R, issue #1). OSD Tape
+// audio adds the tape signal at a quarter of that. sys DC-blocks the
+// output, so a held level is silent.
 wire  audio_snl,audio_snr;
-wire [11:0] sound = {12{audio_snl}};
-wire [15:0] sound_pad =  {1'b0,sound[11:8], sound[7] ^ (status[13] ? (status[12] ? adc_cassette_bit : casdout) : 1'b0), sound[6:0], 3'b0};
+wire        tape_bit   = status[12] ? adc_cassette_bit : casdout;
+wire [15:0] snd_level  = audio_snl ? 16'h1800 : 16'hE800;            // +/- 0x1800
+wire [15:0] tape_level = ~status[13] ? 16'h0000 : tape_bit ? 16'h0600 : 16'hFA00;
+wire [15:0] audio_mix  = snd_level + tape_level;
 
-assign AUDIO_L = sound_pad;
-assign AUDIO_R = {16{audio_snr}};
+assign AUDIO_L = audio_mix;
+assign AUDIO_R = audio_mix;
 assign AUDIO_MIX = 0;
-assign AUDIO_S = 0;
+assign AUDIO_S = 1;
 
-wire hs, vs, hblank, vblank, ce_pix, clk_sel;
+wire hs, vs, hblank, vblank, ce_pix, clk_sel, mode7;
 wire [3:0] r,g,b;
 
-assign CLK_VIDEO = clk_64;
-
+// Video clock 48 MHz (same PLL as clk_16 / clk_24): a pixel every 3rd
+// clock for the ULA's 16 MHz pixels, every 4th in Mode 7 (the SAA5050's
+// 12 MHz pixels, clk_24 domain), so both get even pixels.
+assign CLK_VIDEO = clk_48;
 
 reg ce_pix2;
-always @(posedge CLK_VIDEO ) begin
-   reg [1:0] div;
-
-   div <= div + 1'd1;
-   ce_pix2 <= div == 0;
+always @(posedge CLK_VIDEO) begin
+	reg [1:0] div;
+	reg       m7;
+	m7 <= mode7;
+	div <= (div == (m7 ? 2'd3 : 2'd2)) ? 2'd0 : div + 1'd1;
+	ce_pix2 <= (div == 0);
 end
 
 
@@ -625,6 +522,21 @@ video_mixer #(.GAMMA(1)) video_mixer
    .VBlank(vblank)
 );
 
+video_freak video_freak
+(
+	.*,
+	.VGA_DE_IN(VGA_DE),
+	.VGA_DE(),
+	// Original: the real shape of the 640 x 256 active picture. 16 MHz pixels
+	// on a PAL raster (square-pixel rate 7.375 MHz) have a pixel aspect of
+	// 7.375/16, so 640*7.375/16 : 256 = 295:256 (1.15:1).
+	.ARX((!ar) ? 12'd295 : (ar - 1'd1)),
+	.ARY((!ar) ? 12'd256 : 12'd0),
+	.CROP_SIZE(12'd0),
+	.CROP_OFF(5'd0),
+	.SCALE({1'b0, status[20:19]})
+);
+
 
 
 
@@ -638,13 +550,17 @@ wire sdmiso = vsd_sel ? vsdmiso : SD_MISO;
 wire sdss;
 
 reg vsd_sel = 0;
-always @(posedge clk_sys) if(img_mounted) vsd_sel <= |img_size;
+always @(posedge clk_sys) if(img_mounted[0]) vsd_sel <= |img_size;
 
 wire vsdmiso;
 sd_card sd_card
 (
 	.sd_lba(sd_lba[0]),
 	.sd_buff_din(sd_buff_din[0]),
+	.img_mounted(img_mounted[0]),
+	.sd_rd(sd_rd[0]),
+	.sd_wr(sd_wr[0]),
+	.sd_ack(sd_ack[0]),
 	.*,
 
 	.clk_spi(clk_sys),
@@ -740,50 +656,100 @@ always @(posedge CLK_50M) begin
 end
 
 
-wire casdout;
-wire cas_relay;
 
 
 
 wire locked;
-wire [24:0] sdram_addr;
-wire [7:0] sdram_data;
-wire sdram_rd;
-wire load_tape = ioctl_index[5:0] == 2;
-reg [24:0] tape_end;
+
+// Tape: download -> (gunzip) -> UEF or bit-stream player (rtl/tape.sv).
+// Main_MiSTer converts .uef files to a bit stream itself for this core, so
+// on MiSTer a .uef arrives like a .cas; raw UEF data plays too.
+// OSD Tape speed (P1): the tape plays TAPE_TURBO times faster while the
+// motor runs, the ULA's tape receiver counts that much faster, and the CPU
+// runs at 4 MHz to keep up; the machine is back to normal when the motor
+// stops (tape-standard.md).
+wire load_tape = ioctl_download && ioctl_index[5:0] == 2;
+wire        tmem_req, tmem_we;
+wire [24:0] tmem_addr;
+wire  [7:0] tmem_din;
+reg         tmem_ack = 0;
+reg   [7:0] tmem_dout;
+
+tape #(.CLK_HZ(16000000)) tape
+(
+	.clk(clk_sys),
+	.reset(reset),
+	.load(load_tape),
+	.ioctl_wr(ioctl_wr),
+	.ioctl_addr(ioctl_addr),
+	.ioctl_dout(ioctl_dout),
+	.ioctl_wait(tape_wait),
+	.rewind(status[15]),
+	.motor(cas_relay),
+	.speed(tape_speed),
+	.mem_req(tmem_req),
+	.mem_we(tmem_we),
+	.mem_addr(tmem_addr),
+	.mem_din(tmem_din),
+	.mem_ack(tmem_ack),
+	.mem_dout(tmem_dout),
+	.cas_out(casdout),
+	.is_uef(tape_is_uef),
+	.ready(tape_ready),
+	.unpacking(tape_unpacking),
+	.error(tape_error),
+	.position(tape_pos),
+	.length(tape_len),
+	.qtick(tape_qtick)
+);
+
+// OSD info message when a tape has loaded (tape-standard.md rule 5): 1 "Tape
+// ready (rewound)" (every new tape starts at its start), 2 "Tape format not
+// supported" (bad gzip data).
+always @(posedge clk_sys) begin
+	reg old_ready = 0, old_error = 0;
+	reg [3:0] hold = 0;
+	old_ready <= tape_ready; old_error <= tape_error;
+	if (hold) hold <= hold - 1'd1; else tape_info_req <= 0;
+	if (tape_ready & ~old_ready) begin tape_info <= 8'd1; tape_info_req <= 1; hold <= 4'd15; end
+	if (tape_error & ~old_error) begin tape_info <= 8'd2; tape_info_req <= 1; hold <= 4'd15; end
+end
+
+// byte requests -> sdram.sv (edge-triggered rd/we, `ready` when done)
+wire [15:0] sdram_dout;
+wire        sdram_ready;
+reg         sdr_we = 0, sdr_rd = 0, sdr_busy = 0;
+reg  [24:0] sdr_addr;
+reg   [7:0] sdr_din;
+reg   [2:0] sdr_wait;
+
+always @(posedge clk_sys) begin
+	tmem_ack <= 0;
+	sdr_we <= 0;
+	sdr_rd <= 0;
+	if (!sdr_busy) begin
+		if (tmem_req && !tmem_ack) begin
+			sdr_addr <= tmem_addr; sdr_din <= tmem_din;
+			sdr_we <= tmem_we; sdr_rd <= ~tmem_we;
+			sdr_wait <= 3'd3; sdr_busy <= 1;
+		end
+	end
+	else if (sdr_wait) sdr_wait <= sdr_wait - 1'd1;
+	else if (sdram_ready) begin tmem_ack <= 1; tmem_dout <= sdram_dout[7:0]; sdr_busy <= 0; end
+end
 
 sdram sdram
 (
 	.*,
 	.init(~locked),
 	.clk(clk_sys),
-	.addr(ioctl_download ? ioctl_addr : sdram_addr),
+	.addr(sdr_addr),
 	.wtbt(0),
-	.dout(sdram_data),
-	.din(ioctl_dout),
-	.rd(sdram_rd),
-	.we(ioctl_wr & load_tape),
-	.ready()
-);
-
-
-
-always @(posedge clk_sys) begin
- if (load_tape) tape_end <= ioctl_addr;
-end
-
-cassette cassette(
-  .clk(clk_sys),
-
-  .rewind(status[15] | (load_tape&ioctl_download)),
-  .en(cas_relay),
-  .sdram_addr(sdram_addr),
-  .sdram_data(sdram_data),
-  .sdram_rd(sdram_rd),
-
-  .tape_end(tape_end),
-  .data(casdout)
-//   .status(tape_status)
+	.dout(sdram_dout),
+	.din({8'h00, sdr_din}),
+	.rd(sdr_rd),
+	.we(sdr_we),
+	.ready(sdram_ready)
 );
 
 wire [10:0] h_cnt;
@@ -793,30 +759,39 @@ wire [7:0] o_r;
 wire [7:0] o_g;
 wire [7:0] o_b;
 
-//overlay  #( .RGB(24'hEEEE22) ) overlay
-overlay  #( .RGB(24'hFFFFFF) ) overlay
+// Tape status bar (rtl/tape_overlay.sv, tape-standard.md rules 19-24):
+// "TAPE > m:ss/ m:ss x8" and a progress bar, bottom left, while the relay
+// is on. OSD Tape overlay (P2) turns it off.
+wire [42:0] tape_status_word;
+wire        tape_status_req, tape_status_ack;
+
+tape_status tape_status
 (
-	.reset(reset),
-	.i_r({r,r}),
-	.i_g({g,g}),
-	.i_b({b,b}),
+	.clk(clk_sys),
+	.loaded(tape_ready),
+	.playing(cas_relay),
+	.fast(tape_turbo),
+	.qtick(tape_qtick),
+	.position(tape_pos),
+	.length(tape_len),
+	.timed(~tape_is_uef),
+	.status(tape_status_word),
+	.req(tape_status_req),
+	.ack(tape_status_ack)
+);
 
-	.i_clk(clk_64/*clk_sys*/),
-	.i_pix(ce_pix2),
-	
-	.hcnt(h_cnt[9:0]),
-	.vcnt(v_cnt),
-	
-	.o_r(o_r),
-	.o_g(o_g),
-	.o_b(o_b),
-	
-	.pos(sdram_addr),
-	.max(tape_end),
-	.tape_data(sdram_data),
-
-	
-	.ena(cas_relay & show_cas_overlay)
+tape_overlay #(.FACTOR(TAPE_TURBO[3:0])) tape_overlay
+(
+	.clk(CLK_VIDEO),
+	.ce_pix(ce_pix2),
+	.hblank(hblank),
+	.vblank(vblank),
+	.enable(show_cas_overlay),
+	.status(tape_status_word),
+	.req(tape_status_req),
+	.ack(tape_status_ack),
+	.rgb_in({r, r, g, g, b, b}),
+	.rgb_out({o_r, o_g, o_b})
 );
 
 

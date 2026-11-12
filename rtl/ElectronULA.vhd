@@ -1,21 +1,30 @@
 --------------------------------------------------------------------------------
--- Copyright (c) 2015 David Banks
+-- Copyright (c) 2020 David Banks
 --------------------------------------------------------------------------------
 --   ____  ____
 --  /   /\/   /
 -- /___/  \  /
 -- \   \   \/
 --  \   \
---  /   /         Filename  : ElectronFpga_core.vhd
--- /___/   /\     Timestamp : 28/07/2015
+--  /   /         Filename  : ElectronULA.vhd
+-- /___/   /\     Timestamp : 27/06/2020
 -- \   \  /  \
 --  \___\/\___\
 --
---Design Name: ElectronFpga_core
-
-
--- TODO:
--- Implement Cassette Out
+--Design Name: ElectronULA
+--
+-- MiSTer: hoglet67/ElectronFpga src/common/ElectronULA.vhd @ af6c24e9 (2020-07-23)
+-- with these changes:
+--   - ports cepix, hblank, vblank, h_cnt/v_cnt (tape overlay), Plus 1 joysticks
+--   - Plus 1 ADC (&FC70) and status register (&FC72)
+--   - RAM_32k_DualPort (altsyncram) port names; the 20K RAM option is removed
+--   - Sorgelig/Gideon via6522 for the MMC interface instead of M6522
+--   - without IncludeVGA the video clock is clk_16M00 itself
+--   - vsync/hsync are kept separate in the 15 kHz modes (MiSTer's video path
+--     needs both)
+--   - Jafa Mode 7 (upstream's, IncludeJafaMode7): for MiSTer it also drives
+--     hblank/vblank from the SAA5050's pixel-aligned DE and the 6845's VDE,
+--     separate syncs, and a `mode7` output (12 MHz pixels on clk_24M00)
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -27,22 +36,31 @@ entity ElectronULA is
         IncludeMMC       : boolean := true;
         Include32KRAM    : boolean := true;
         IncludeVGA       : boolean := true;
-        IncludeJafaMode7 : boolean := false
+        IncludeJafaMode7 : boolean := false;
+        LimitROMSpeed    : boolean := true;   -- true to limit ROM speed to 2MHz
+        LimitIOSpeed     : boolean := true;   -- true to limit IO speed to 1MHz
+        UseClockMux      : boolean := false;  -- false for Xilinx, true for Altera
+        UseTTxtClock     : boolean := false;  -- true to use clk_ttxt/clken_ttxt_12M, false to use clk_24M00
+        IncludeTTxtROM   : boolean := true    -- false if the SAA5050 character ROM needs loading
     );
     port (
         clk_16M00 : in  std_logic;
-        clk_24M00 : in  std_logic;
+        clk_24M00 : in  std_logic := '0';
+        clk_ttxt  : in  std_logic := '0';
         clk_32M00 : in  std_logic;
         clk_33M33 : in  std_logic;
         clk_40M00 : in  std_logic;
 
+        clken_ttxt_12M : in std_logic := '0';
+
         -- CPU Interface
         addr      : in  std_logic_vector(15 downto 0);
-        data_in   : in  std_logic_vector(7 downto 0);
+        data_in   : in  std_logic_vector(7 downto 0);  -- Async, but stable on rising edge of cpu_clken
         data_out  : out std_logic_vector(7 downto 0);
         data_en   : out std_logic;
         R_W_n     : in  std_logic;
         RST_n     : in  std_logic;
+        POR_n     : in  std_logic := '1';  -- MiSTer: power-on reset (sets the &FE00 bit 1 power-on flag)
         IRQ_n     : out std_logic;
         NMI_n     : in  std_logic;
 
@@ -50,20 +68,22 @@ entity ElectronULA is
         ROM_n     : out std_logic;
 
         -- Video
-		  cepix		: out std_logic;
+        cepix     : out std_logic;
         red       : out std_logic_vector(3 downto 0);
         green     : out std_logic_vector(3 downto 0);
         blue      : out std_logic_vector(3 downto 0);
         vsync     : out std_logic;
         hsync     : out std_logic;
-		  hblank		: out std_logic;
-		  vblank		: out std_logic;
+        hblank    : out std_logic;
+        vblank    : out std_logic;
+        mode7     : out std_logic;   -- MiSTer: the Mode 7 picture is shown (12 MHz pixels, clk_24M00)
+        vfield    : out std_logic;   -- MiSTer: interlace field of the picture shown (0 when progressive)
 
         -- Audio
         sound     : out std_logic;
 
         -- Keyboard
-        kbd       : in  std_logic_vector(3 downto 0);
+        kbd       : in  std_logic_vector(3 downto 0);  -- Async
 
         -- SD Card
         SDMISO    : in  std_logic;
@@ -73,6 +93,9 @@ entity ElectronULA is
 
         -- Casette
         casIn     : in  std_logic;
+        -- MiSTer turbo tape: the tape plays N times faster, so the receiver's
+        -- pulse-length counter counts N per clock (thresholds unchanged)
+        tape_speed : in std_logic_vector(4 downto 0) := "00001";
         casOut    : out std_logic;
 
         -- MISC
@@ -85,21 +108,31 @@ entity ElectronULA is
 
         -- Clock Generation
         cpu_clken_out  : out std_logic;
+        cpu_clk_out    : out std_logic;
         turbo          : in std_logic_vector(1 downto 0);
-        turbo_out      : out std_logic_vector(1 downto 0);
+        turbo_out      : out std_logic_vector(1 downto 0) := "01";
 
-        -- Joystick Inputs
-	joystick1_x   : in std_logic_vector(7 downto 0);
-	joystick1_y   : in std_logic_vector(7 downto 0);
-	joystick1_fire   : in std_logic;
-	joystick2_x   : in std_logic_vector(7 downto 0);
-	joystick2_y   : in std_logic_vector(7 downto 0);
-	joystick2_fire   : in std_logic;
-		  
-		  
-        -- Output to sync overlay
-	h_cnt: out std_logic_vector(10  downto 0);
-	v_cnt: out std_logic_vector( 9  downto 0)
+        -- SAA5050 character ROM loading
+        char_rom_we   : in std_logic := '0';
+        char_rom_addr : in std_logic_vector(11 downto 0) := (others => '0');
+        char_rom_data : in std_logic_vector(7 downto 0) := (others => '0');
+
+        -- Plus 1 joysticks: ADC values (&00 = right/down, &FF = left/up),
+        -- fire active high
+        joystick1_x    : in std_logic_vector(7 downto 0) := x"80";
+        joystick1_y    : in std_logic_vector(7 downto 0) := x"80";
+        joystick1_fire : in std_logic := '0';
+        joystick2_x    : in std_logic_vector(7 downto 0) := x"80";
+        joystick2_y    : in std_logic_vector(7 downto 0) := x"80";
+        joystick2_fire : in std_logic := '0';
+
+        -- First Byte joystick interface (&FCC0): active high, 0 up, 1 down,
+        -- 2 left, 3 right, 4 fire
+        fb_joy         : in std_logic_vector(4 downto 0) := (others => '0');
+
+        -- Beam position for the tape overlay
+        h_cnt     : out std_logic_vector(10 downto 0);
+        v_cnt     : out std_logic_vector(9 downto 0)
 
         );
 end;
@@ -107,6 +140,7 @@ end;
 architecture behavioral of ElectronULA is
 
   signal hsync_int      : std_logic;
+  signal hsync_int_last : std_logic;
   signal vsync_int      : std_logic;
 
   signal ram_we         : std_logic;
@@ -151,11 +185,12 @@ architecture behavioral of ElectronULA is
   signal v_count        : std_logic_vector(9 downto 0);
 
   signal v_rtc          : std_logic_vector(9 downto 0);
-  signal v_display      : std_logic_vector(9 downto 0);
+  signal v_disp_gph     : std_logic_vector(9 downto 0);
+  signal v_disp_txt     : std_logic_vector(9 downto 0);
 
   signal char_row       : std_logic_vector(3 downto 0);
-  signal row_offset     : std_logic_vector(14 downto 0);
   signal col_offset     : std_logic_vector(9 downto 0);
+
   signal screen_addr    : std_logic_vector(14 downto 0);
   signal screen_data    : std_logic_vector(7 downto 0);
 
@@ -163,8 +198,8 @@ architecture behavioral of ElectronULA is
 
   signal mode           : std_logic_vector(1 downto 0);
 
-  -- the 256 byte page that the mode starts at
-  signal mode_base      : std_logic_vector(7 downto 0);
+  -- bits 6..3 the of the 256 byte page that the mode starts at
+  signal mode_base      : std_logic_vector(6 downto 3);
 
   -- the number of bits per pixel (0 = 1BPP, 1 = 2BPP, 2=4BPP)
   signal mode_bpp       : std_logic_vector(1 downto 0);
@@ -175,8 +210,7 @@ architecture behavioral of ElectronULA is
   -- a '1' indicates a 40-col mode (modes 4, 5 and 6)
   signal mode_40        : std_logic;
 
-  -- the number of bytes to increment row_offset when moving from one char row to the next
-  signal mode_rowstep   : std_logic_vector(9 downto 0);
+  signal last_line      : std_logic;
 
   signal display_intr   : std_logic;
   signal display_intr1  : std_logic;
@@ -198,10 +232,6 @@ architecture behavioral of ElectronULA is
   -- Supports changing the jumpers
   signal mode_init_copy : std_logic_vector(1 downto 0);
 
-  -- Stable copies sampled once per frame
-  signal screen_base1   : std_logic_vector(14 downto 6);
-  signal mode_base1     : std_logic_vector(7 downto 0);
-
   -- Tape Interface
   signal cintone        : std_logic;
   signal cindat         : std_logic;
@@ -217,51 +247,55 @@ architecture behavioral of ElectronULA is
   signal green_int      : std_logic_vector(3 downto 0);
   signal blue_int       : std_logic_vector(3 downto 0);
 
-  signal adc_chan       : std_logic_vector(3 downto 0);
-  signal plus_1_stat_reg :std_logic_vector(7 downto 0);
-  signal plus_1_adc_data       : std_logic_vector (7 downto 0);
-  signal plus_1_adc_n_intr : std_logic;
   -- CRTC signals (only used when Jafa Mode 7 is enabled)
---  signal crtc_enable    :   std_logic;
---  signal crtc_clken     :   std_logic;
---  signal crtc_do        :   std_logic_vector(7 downto 0);
---  signal crtc_vsync     :   std_logic;
---  signal crtc_vsync_n   :   std_logic;
---  signal crtc_hsync     :   std_logic;
---  signal crtc_hsync_n   :   std_logic;
---  signal crtc_de        :   std_logic;
---  signal crtc_cursor    :   std_logic;
---  signal crtc_cursor1   :   std_logic;
---  signal crtc_cursor2   :   std_logic;
+  signal crtc_enable    :   std_logic;
+  signal crtc_clken     :   std_logic;
+  signal crtc_do        :   std_logic_vector(7 downto 0);
+  signal crtc_vsync     :   std_logic;
+  signal crtc_vsync_n   :   std_logic;
+  signal crtc_hsync     :   std_logic;
+  signal crtc_hsync_n   :   std_logic;
+  signal crtc_de        :   std_logic;
+  signal crtc_cursor    :   std_logic;
+  signal crtc_cursor1   :   std_logic;
+  signal crtc_cursor2   :   std_logic;
   signal crtc_ma        :   std_logic_vector(13 downto 0) := (others => '0');
---  signal crtc_ra        :   std_logic_vector(4 downto 0);
---  signal status_enable  :   std_logic;
---  signal status_do      :   std_logic_vector(7 downto 0);
+  signal crtc_ra        :   std_logic_vector(4 downto 0);
+  signal status_enable  :   std_logic;
+  signal status_do      :   std_logic_vector(7 downto 0);
 
   -- SAA5050 signals (only used when Jafa Mode 7 is enabled)
---  signal ttxt_clken     :   std_logic;
---  signal ttxt_glr       :   std_logic;
---  signal ttxt_dew       :   std_logic;
---  signal ttxt_crs       :   std_logic;
---  signal ttxt_lose      :   std_logic;
---  signal ttxt_r_int     :   std_logic;
---  signal ttxt_g_int     :   std_logic;
---  signal ttxt_b_int     :   std_logic;
---  signal ttxt_r         :   std_logic;
---  signal ttxt_g         :   std_logic;
---  signal ttxt_b         :   std_logic;
-  signal ttxt_r_out     :   std_logic:= '0';
-  signal ttxt_g_out     :   std_logic:= '0';
-  signal ttxt_b_out     :   std_logic:= '0';
-  signal ttxt_hs_out    :   std_logic:= '0';
-  signal ttxt_vs_out    :   std_logic:= '0';
---  signal mist_r         :   std_logic_vector(1 downto 0);
---  signal mist_g         :   std_logic_vector(1 downto 0);
---  signal mist_b         :   std_logic_vector(1 downto 0);
---  signal mist_hs        :   std_logic;
---  signal mist_vs        :   std_logic;
+  signal ttxt_clock     :   std_logic;
+  signal ttxt_clken     :   std_logic;
+  signal ttxt_glr       :   std_logic;
+  signal ttxt_dew       :   std_logic;
+  signal ttxt_crs       :   std_logic;
+  signal ttxt_lose      :   std_logic;
+  signal ttxt_r_int     :   std_logic;
+  signal ttxt_g_int     :   std_logic;
+  signal ttxt_b_int     :   std_logic;
+  signal ttxt_r         :   std_logic;
+  signal ttxt_g         :   std_logic;
+  signal ttxt_b         :   std_logic;
+  signal ttxt_r_out     :   std_logic;
+  signal ttxt_g_out     :   std_logic;
+  signal ttxt_b_out     :   std_logic;
+  signal ttxt_hs_out    :   std_logic;
+  signal ttxt_vs_out    :   std_logic;
+  signal mist_r         :   std_logic_vector(1 downto 0);
+  signal mist_g         :   std_logic_vector(1 downto 0);
+  signal mist_b         :   std_logic_vector(1 downto 0);
+  signal mist_hs        :   std_logic;
+  signal mist_vs        :   std_logic;
 
   signal mode7_enable   :   std_logic;
+  signal hblank_int     :   std_logic;
+  signal vblank_int     :   std_logic;
+  signal crtc_vde       :   std_logic;
+  signal ttxt_de        :   std_logic;
+  signal ttxt_hde       :   std_logic;
+  signal crtc_hde       :   std_logic;
+  signal crtc_field     :   std_logic;
 
   -- internal signals to generate the video clock
   signal clk_16M00_a    :   std_logic;
@@ -277,27 +311,27 @@ architecture behavioral of ElectronULA is
   signal ROM_n_int      :   std_logic;
 
   -- clock enable generation
-  signal clken_counter     : std_logic_vector (3 downto 0);
+  signal clken_counter  : std_logic_vector (3 downto 0) := (others => '0');
+  signal turbo_sync     : std_logic_vector (1 downto 0);
 
   signal contention     : std_logic;
   signal contention1    : std_logic;
   signal contention2    : std_logic;
-  signal rom_access     : std_logic; -- always at 2mhz, no contention
-  signal ram_access     : std_logic; -- 1MHz/2Mhz/Stopped
+  signal io_access      : std_logic; -- always at 1MHz, no contention
+  signal rom_access     : std_logic; -- always at 2MHz, no contention
+  signal ram_access     : std_logic; -- 1MHz/2MHz/Stopped
 
-  signal clk_state      : std_logic_vector(2 downto 0);
+  signal kbd_access     : std_logic;
+
+  signal clk_stopped    : std_logic_vector(1 downto 0) := "00";
+
   signal cpu_clken      : std_logic;
-  signal cpu_clken_1    : std_logic;
-  signal cpu_clken_2    : std_logic;
-  signal cpu_clken_4    : std_logic;
   signal via1_clken     : std_logic;
-  signal via1_clken_1   : std_logic;
-  signal via1_clken_2   : std_logic;
-  signal via1_clken_4   : std_logic;
-  signal via2_clken     : std_logic;
-  signal via2_clken_1   : std_logic;
-  signal via2_clken_2   : std_logic;
-  signal via2_clken_4   : std_logic;
+  signal via4_clken     : std_logic;
+  signal cpu_clk        : std_logic := '1';
+  signal clk_counter    : std_logic_vector(2 downto 0) := (others => '0');
+
+  signal via_rising     : std_logic;
 
   signal mc6522_enable     : std_logic;
   signal mc6522_data       : std_logic_vector(7 downto 0);
@@ -316,8 +350,14 @@ architecture behavioral of ElectronULA is
   signal sdclk_int         : std_logic;
 
   signal ula_irq_n         : std_logic;
-  
-  
+
+  -- Plus 1 joystick interface
+  signal adc_chan          : std_logic_vector(3 downto 0);
+  signal plus_1_stat_reg   : std_logic_vector(7 downto 0);
+  signal plus_1_adc_data   : std_logic_vector(7 downto 0);
+  signal plus_1_adc_n_intr : std_logic := '0';  -- 0 = conversion complete (power-on: complete)
+  signal plus_1_adc_count  : unsigned(9 downto 0) := (others => '0');
+
 -- Helper function to cast an std_logic value to an integer
 function sl2int (x: std_logic) return integer is
 begin
@@ -336,83 +376,100 @@ end;
 
 begin
 
-	cepix <= clk_video;
-
     -- video timing constants
     -- mode 00 - RGB/s @ 50Hz non-interlaced
     -- mode 01 - RGB/s @ 50Hz interlaced
     -- mode 10 - SVGA  @ 50Hz
     -- mode 11 - SVGA  @ 60Hz
 
-	 --clk_video <= clk_16M00;
-	 
-    -- A simple clock mux causes lots of warnings from the Xilinx tool
-    --  clk_video    <= clk_40M00 when mode = "11" else
-    --                  clk_33M33 when mode = "10" else
-    --                  clk_16M00;
-    -- Instead, we regenerate the clock using edge triggered flip flops
+    cepix <= clk_video;
 
-    process(clk_16M00)
-    begin
-        if rising_edge(clk_16M00) then
-            clk_16M00_a <= not clk_16M00_a;
-        end if;
-    end process;
+    gen_clk_16 : if not IncludeVGA generate
 
-    process(clk_16M00)
-    begin
-        if falling_edge(clk_16M00) then
-            clk_16M00_b <= not clk_16M00_b;
-        end if;
-    end process;
+        -- MiSTer: 15 kHz modes only, the video side runs on the CPU clock.
 
-    clk_16M00_c <= clk_16M00_a xor clk_16M00_b;
+        clk_video <= clk_16M00;
 
-    process(clk_33M33)
-    begin
-        if rising_edge(clk_33M33) then
-            clk_33M33_a <= not clk_33M33_a;
-        end if;
-    end process;
+    end generate;
 
-    process(clk_33M33)
-    begin
-        if falling_edge(clk_33M33) then
-            clk_33M33_b <= not clk_33M33_b;
-        end if;
-    end process;
+    gen_clk_mux : if IncludeVGA and UseClockMux generate
 
-    clk_33M33_c <= clk_33M33_a xor clk_33M33_b;
+        -- A simple clock mux causes lots of warnings from the Xilinx tool,
+        -- but is OK with Quartus.
 
-    process(clk_40M00)
-    begin
-        if rising_edge(clk_40M00) then
-            clk_40M00_a <= not clk_40M00_a;
-        end if;
-    end process;
+        clk_video    <= clk_40M00 when mode = "11" else
+                        clk_33M33 when mode = "10" else
+                        clk_16M00;
 
-    process(clk_40M00)
-    begin
-        if falling_edge(clk_40M00) then
-            clk_40M00_b <= not clk_40M00_b;
-        end if;
-    end process;
-
-    clk_40M00_c <= clk_40M00_a xor clk_40M00_b;
+    end generate;
 
 
-    clk_video    <= clk_40M00_c when mode = "11" and IncludeVGA else
-                    clk_33M33_c when mode = "10" and IncludeVGA else
-                    clk_16M00_c;
+    gen_clk_with_flops : if IncludeVGA and not UseClockMux generate
 
+        -- Regenerate the clock using edge triggered flip flops on Xilinx.
+
+        process(clk_16M00)
+        begin
+            if rising_edge(clk_16M00) then
+                clk_16M00_a <= not clk_16M00_a;
+            end if;
+        end process;
+
+        process(clk_16M00)
+        begin
+            if falling_edge(clk_16M00) then
+                clk_16M00_b <= not clk_16M00_b;
+            end if;
+        end process;
+
+        clk_16M00_c <= clk_16M00_a xor clk_16M00_b;
+
+        process(clk_33M33)
+        begin
+            if rising_edge(clk_33M33) then
+                clk_33M33_a <= not clk_33M33_a;
+            end if;
+        end process;
+
+        process(clk_33M33)
+        begin
+            if falling_edge(clk_33M33) then
+                clk_33M33_b <= not clk_33M33_b;
+            end if;
+        end process;
+
+        clk_33M33_c <= clk_33M33_a xor clk_33M33_b;
+
+        process(clk_40M00)
+        begin
+            if rising_edge(clk_40M00) then
+                clk_40M00_a <= not clk_40M00_a;
+            end if;
+        end process;
+
+        process(clk_40M00)
+        begin
+            if falling_edge(clk_40M00) then
+                clk_40M00_b <= not clk_40M00_b;
+            end if;
+        end process;
+
+        clk_40M00_c <= clk_40M00_a xor clk_40M00_b;
+
+
+        clk_video    <= clk_40M00_c when mode = "11" and IncludeVGA else
+                        clk_33M33_c when mode = "10" and IncludeVGA else
+                        clk_16M00_c;
+
+    end generate;
 
     hsync_start  <= std_logic_vector(to_unsigned(759, 11)) when mode = "11" and IncludeVGA else
                     std_logic_vector(to_unsigned(759, 11)) when mode = "10" and IncludeVGA else
-                    std_logic_vector(to_unsigned(762, 11));
+                    std_logic_vector(to_unsigned(768, 11));
 
     hsync_end    <= std_logic_vector(to_unsigned(887, 11)) when mode = "11" and IncludeVGA else
                     std_logic_vector(to_unsigned(887, 11)) when mode = "10" and IncludeVGA else
-                    std_logic_vector(to_unsigned(837, 11));
+                    std_logic_vector(to_unsigned(832, 11));
 
     h_total      <= std_logic_vector(to_unsigned(1055, 11)) when mode = "11" and IncludeVGA else
                     std_logic_vector(to_unsigned(1055, 11)) when mode = "10" and IncludeVGA else
@@ -420,12 +477,19 @@ begin
 
     h_active     <= std_logic_vector(to_unsigned(640, 11));
 
+    -- Note: The real ULA uses line 281->283/4 for VSYNC, but on both
+    -- my TVs this loses part of the top line. So here we move the
+    -- screen down by 7 rows. This should be transparent to software,
+    -- as it doesn't affect the timing of the display or RTC
+    -- interrupts. I'm happy to rever this is anyone complains!
+
     vsync_start  <= std_logic_vector(to_unsigned(556, 10)) when mode = "11" and IncludeVGA else
                     std_logic_vector(to_unsigned(556, 10)) when mode = "10" and IncludeVGA else
                     std_logic_vector(to_unsigned(274, 10));
 
     vsync_end    <= std_logic_vector(to_unsigned(560, 10)) when mode = "11" and IncludeVGA else
                     std_logic_vector(to_unsigned(560, 10)) when mode = "10" and IncludeVGA else
+                    std_logic_vector(to_unsigned(276, 10)) when field = '0'                else
                     std_logic_vector(to_unsigned(277, 10));
 
     v_total      <= std_logic_vector(to_unsigned(627, 10)) when mode = "11" and IncludeVGA else
@@ -441,39 +505,42 @@ begin
                     std_logic_vector(to_unsigned(500, 10)) when mode = "10" and IncludeVGA else
                     std_logic_vector(to_unsigned(250, 10));
 
-    v_display    <= std_logic_vector(to_unsigned(513, 10)) when mode = "11" and IncludeVGA else
+    v_disp_gph   <= std_logic_vector(to_unsigned(513, 10)) when mode = "11" and IncludeVGA else
                     std_logic_vector(to_unsigned(513, 10)) when mode = "10" and IncludeVGA else
-                    std_logic_vector(to_unsigned(256, 10));
+                    std_logic_vector(to_unsigned(255, 10));
+
+    v_disp_txt   <= std_logic_vector(to_unsigned(501, 10)) when mode = "11" and IncludeVGA else
+                    std_logic_vector(to_unsigned(501, 10)) when mode = "10" and IncludeVGA else
+                    std_logic_vector(to_unsigned(249, 10));
 
     v_rtc        <= std_logic_vector(to_unsigned(201, 10)) when mode = "11" and IncludeVGA else
                     std_logic_vector(to_unsigned(201, 10)) when mode = "10" and IncludeVGA else
-                    std_logic_vector(to_unsigned(100, 10));
-
+                    std_logic_vector(to_unsigned( 99, 10));
 
     -- All of main memory (0x0000-0x7fff) is dual port RAM in the ULA
-
-        ram_32k : entity work.RAM_32K_DualPort port map(
-            -- Port A is the 6502 port
-            clock_a  => clk_16M00,
-            wren_a   => ram_we,
-            address_a => addr(14 downto 0),
-            data_a  => data_in,
-            q_a => ram_data,
-            -- Port B is the VGA Port
-            clock_b  => clk_video,
-            wren_b   => '0',
-            address_b => screen_addr,
-            data_b  => x"00",
-            q_b => screen_data
-            );
-        ram_we <= '1' when addr(15) = '0' and R_W_n = '0' and cpu_clken = '1' else '0';
+    -- MiSTer: always the full 32K (Include32KRAM is ignored)
+    ram_32k : entity work.RAM_32k_DualPort port map(
+        -- Port A is the 6502 port
+        clock_a   => clk_16M00,
+        wren_a    => ram_we,
+        address_a => addr(14 downto 0),
+        data_a    => data_in,
+        q_a       => ram_data,
+        -- Port B is the video port
+        clock_b   => clk_video,
+        wren_b    => '0',
+        address_b => screen_addr,
+        data_b    => x"00",
+        q_b       => screen_data
+        );
+    ram_we <= '1' when addr(15) = '0' and R_W_n = '0' and cpu_clken = '1' else '0';
 
     sound <= sound_bit;
 
     -- The external ROM is enabled:
     -- - When the address is C000-FBFF and FF00-FFFF (i.e. OS Rom)
     -- - When the address is 8000-BFFF and the ROM 10 or 11 is paged in (101x)
-    ROM_n_int <= '0' when addr(15 downto 14) = "11" and addr(15 downto 8) /= x"FC" and addr(15 downto 8) /= x"FD" and addr(15 downto 8) /= x"FE" else
+    ROM_n_int <= '0' when addr(15 downto 14) = "11" and io_access = '0' else
                  '0' when addr(15 downto 14) = "10" and page_enable = '1' and page(2 downto 1) = "01" else
                  '1';
 
@@ -481,25 +548,26 @@ begin
 
     -- ULA Reads + RAM Reads + KBD Reads
     data_out <= ram_data                  when addr(15) = '0' else
-                "0000" & (kbd xor "1111") when addr(15 downto 14) = "10" and page_enable = '1' and page(2 downto 1) = "00" else
+                "0000" & (kbd xor "1111") when kbd_access = '1' else
                 isr_data                  when addr(15 downto 8) = x"FE" and addr(3 downto 0) = x"0" else
                 data_shift                when addr(15 downto 8) = x"FE" and addr(3 downto 0) = x"4" else
---                crtc_do                   when crtc_enable = '1' and IncludeJafaMode7 else
---                status_do                 when status_enable = '1' and IncludeJafaMode7 else
+                crtc_do                   when crtc_enable = '1' and IncludeJafaMode7 else
+                status_do                 when status_enable = '1' and IncludeJafaMode7 else
                 mc6522_data               when mc6522_enable = '1' and IncludeMMC else
-					 plus_1_stat_reg           when addr = x"FC72" else
-					 plus_1_adc_data          when addr = x"FC70" else
+                plus_1_stat_reg           when addr = x"FC72" else
+                plus_1_adc_data           when addr = x"FC70" else
+                "111" & not fb_joy        when addr(15 downto 4) = x"FCC" else  -- First Byte (A3-A0 not decoded)
                 x"F1"; -- todo FIXEME
 
     data_en  <= '1'                       when addr(15) = '0' else
-                '1'                       when addr(15 downto 14) = "10" and page_enable = '1' and page(2 downto 1) = "00" else
+                '1'                       when kbd_access = '1' else
                 '1'                       when addr(15 downto 8) = x"FE" else
---                '1'                       when crtc_enable = '1' and IncludeJafaMode7 else
---                '1'                       when status_enable = '1' and IncludeJafaMode7 else
+                '1'                       when crtc_enable = '1' and IncludeJafaMode7 else
+                '1'                       when status_enable = '1' and IncludeJafaMode7 else
                 '1'                       when mc6522_enable = '1' and IncludeMMC else
-					'1' 								when addr = x"FC72" else
-					'1'								when addr = x"FC70" else
-
+                '1'                       when addr = x"FC72" else
+                '1'                       when addr = x"FC70" else
+                '1'                       when addr(15 downto 4) = x"FCC" else
                 '0';
 
     -- Register FEx0 is the Interrupt Status Register (Read Only)
@@ -526,6 +594,12 @@ begin
 
             if (RST_n = '0') then
 
+               -- MiSTer: a power-on reset (OSD Reset / USER button) sets the
+               -- power-on flag again, so the MOS does a cold start; BREAK does not
+               if (POR_n = '0') then
+                   power_on_reset      <= '1';
+                   delayed_clear_reset <= '0';
+               end if;
                isr             <= (others => '0');
                ier             <= (others => '0');
                screen_base     <= (others => '0');
@@ -544,7 +618,6 @@ begin
                ctrl_caps       <= '0';
                cindat          <= '0';
                cintone         <= '0';
-               turbo_out       <= "01";
 
             else
                 -- Detect Jumpers being changed
@@ -586,7 +659,7 @@ begin
                     if (casIn2 = '0') then
                         general_counter <= (others => '0');
                     else
-                        general_counter <= general_counter + 1;
+                        general_counter <= general_counter + tape_speed;   -- MiSTer: N per clock
                     end if;
                 elsif (comms_mode = "01") then
                     -- Sound Mode - Frequency = 1MHz / [16 * (S + 1)]
@@ -691,7 +764,7 @@ begin
                 end if;
 
                 -- regardless of the comms mode, update coutbits state (at 1200Hz)
-                if general_counter(13 downto 0) = 0 then                            
+                if general_counter(13 downto 0) = 0 then
                     -- wait to TDEmpty interrupt to be cleared before starting
                     if coutbits = 0 then
                         if isr(5) = '0' then
@@ -718,14 +791,14 @@ begin
                 else
                     -- stop bit or data bit "1" or any other time= 2400Hz
                     casOut <= general_counter(12);
-                end if;                
+                end if;
 
                 -- ULA Writes
                 if (cpu_clken = '1') then
                     if delayed_clear_reset = '1' then
                         power_on_reset <= '0';
                     end if;
-                    -- Detect control+caps 1...4 and change video format
+                    ---- Detect control+caps 1...4 and change video format
                     if (addr = x"9fff" and page_enable = '1' and page(2 downto 1) = "00") then
                         if (kbd(2 downto 1) = "00") then
                             ctrl_caps <= '1';
@@ -733,41 +806,38 @@ begin
                             ctrl_caps <= '0';
                         end if;
                     end if;
-                    -- Detect "1" being pressed
+                    -- Detect "1" being pressed: RGB non-interlaced (default)
                     if (addr = x"afff" and page_enable = '1' and page(2 downto 1) = "00" and ctrl_caps = '1' and kbd(0) = '0') then
                         mode <= "00";
                     end if;
-                    -- Detect "2" being pressed
+                    -- Detect "2" being pressed: RGB interlaced
                     if (addr = x"b7ff" and page_enable = '1' and page(2 downto 1) = "00" and ctrl_caps = '1' and kbd(0) = '0') then
                         mode <= "01";
                     end if;
-                    -- Detect "3" being pressed
+                    -- Detect "3" being pressed: SVGA @ 50 Hz (33 MHz clock)
                     if (addr = x"bbff" and page_enable = '1' and page(2 downto 1) = "00" and ctrl_caps = '1' and kbd(0) = '0' and IncludeVGA) then
                         mode <= "10";
                     end if;
-                    -- Detect "4" being pressed
+                    -- Detect "4" being pressed: SVGA @ 60 Hz (40 MHz clock)
                     if (addr = x"bdff" and page_enable = '1' and page(2 downto 1) = "00" and ctrl_caps = '1' and kbd(0) = '0' and IncludeVGA) then
                         mode <= "11";
                     end if;
-                    -- Detect "5" being pressed
+                    -- Detect "5" being pressed: 1MHz
                     if (addr = x"beff" and page_enable = '1' and page(2 downto 1) = "00" and ctrl_caps = '1' and kbd(0) = '0') then
                         turbo_out <= "00";
                     end if;
-                    -- Detect "6" being pressed
+                    -- Detect "6" being pressed: 2MHz with contention (default)
                     if (addr = x"bf7f" and page_enable = '1' and page(2 downto 1) = "00" and ctrl_caps = '1' and kbd(0) = '0') then
                         turbo_out <= "01";
                     end if;
-                    -- Detect "7" being pressed
+                    -- Detect "7" being pressed: 2MHz no contention
                     if (addr = x"bfbf" and page_enable = '1' and page(2 downto 1) = "00" and ctrl_caps = '1' and kbd(0) = '0') then
                         turbo_out <= "10";
                     end if;
-                    -- Detect "8" being pressed
+                    -- Detect "8" being pressed: 4MHz
                     if (addr = x"bfdf" and page_enable = '1' and page(2 downto 1) = "00" and ctrl_caps = '1' and kbd(0) = '0') then
                         turbo_out <= "11";
                     end if;
-						  if (addr = x"FC70") then -- this will set what channel of adc to read
-								adc_chan <= data_in(3 downto 0);
-						  end if; 
                     if (addr(15 downto 8) = x"FE") then
                         if (R_W_n = '1') then
                             -- Clear the power on reset flag on the first read of the ISR (FEx0)
@@ -823,54 +893,46 @@ begin
                                 motor_int    <= data_in(6);
                                 case (data_in(5 downto 3)) is
                                 when "000" =>
-                                    mode_base    <= x"30";
+                                    mode_base    <= "0110"; -- 0x3000
                                     mode_bpp     <= "00";
                                     mode_40      <= '0';
                                     mode_text    <= '0';
-                                    mode_rowstep <= std_logic_vector(to_unsigned(633, 10)); -- 640 - 7
                                 when "001" =>
-                                    mode_base    <= x"30";
+                                    mode_base    <= "0110"; -- 0x3000
                                     mode_bpp     <= "01";
                                     mode_40      <= '0';
                                     mode_text    <= '0';
-                                    mode_rowstep <= std_logic_vector(to_unsigned(633, 10)); -- 640 - 7
                                 when "010" =>
-                                    mode_base    <= x"30";
+                                    mode_base    <= "0110"; -- 0x3000
                                     mode_bpp     <= "10";
                                     mode_40      <= '0';
                                     mode_text    <= '0';
-                                    mode_rowstep <= std_logic_vector(to_unsigned(633, 10)); -- 640 - 7
                                 when "011" =>
-                                    mode_base    <= x"40";
+                                    mode_base    <= "1000"; -- 0x4000
                                     mode_bpp     <= "00";
                                     mode_40      <= '0';
                                     mode_text    <= '1';
-                                    mode_rowstep <= std_logic_vector(to_unsigned(631, 10)); -- 640 - 9
                                 when "100" =>
-                                    mode_base    <= x"58";
+                                    mode_base    <= "1011"; -- 0x5800
                                     mode_bpp     <= "00";
                                     mode_40      <= '1';
                                     mode_text    <= '0';
-                                    mode_rowstep <= std_logic_vector(to_unsigned(313, 10)); -- 320 - 7
                                 when "101" =>
-                                    mode_base    <= x"60";
+                                    mode_base    <= "1011"; -- 0x5800
                                     mode_bpp     <= "01";
                                     mode_40      <= '1';
                                     mode_text    <= '0';
-                                    mode_rowstep <= std_logic_vector(to_unsigned(313, 10)); -- 320 - 7
                                 when "110" =>
-                                    mode_base    <= x"60";
+                                    mode_base    <= "1100"; -- 0x6000
                                     mode_bpp     <= "00";
                                     mode_40      <= '1';
                                     mode_text    <= '1';
-                                    mode_rowstep <= std_logic_vector(to_unsigned(311, 10)); -- 320 - 9
                                 when "111" =>
                                     -- mode 7 seems to default to mode 4
-                                    mode_base    <= x"58";
+                                    mode_base    <= "1011"; -- 0x5800
                                     mode_bpp     <= "00";
                                     mode_40      <= '1';
                                     mode_text    <= '0';
-                                    mode_rowstep <= std_logic_vector(to_unsigned(313, 10)); -- 320 - 7
                                 when others =>
                                 end case;
                                 comms_mode   <= data_in(2 downto 1);
@@ -893,13 +955,6 @@ begin
         end if;
     end process;
 
-	 
-
-
-
-
-	 
-	 
     -- SGVA timing at 60Hz with a 40.000MHz Pixel Clock
     -- Horizontal 800 + 40 + 128 + 88 = total 1056
     -- Vertical   600 +  1 +   4 + 23 = total 628
@@ -912,70 +967,135 @@ begin
     -- Vertical   256 + (16 +  2) +   3 + (19 + 16) = total 312
 
     process (clk_video)
-    variable pixel : std_logic_vector(3 downto 0);
+        variable pixel : std_logic_vector(3 downto 0);
+        -- start address of current row block (8-10 lines)
+        variable row_addr  : std_logic_vector(14 downto 6);
+        -- address within current line
+        variable byte_addr : std_logic_vector(14 downto 3);
     begin
         if rising_edge(clk_video) then
-            -- pipeline h_count by one cycle to compensate the register in the RAM
-            h_count1 <= h_count;
-            if (h_count = h_total) then
+
+            -- Horizontal counter, clocked at the pixel clock rate
+            if h_count = h_total then
                 h_count <= (others => '0');
-                col_offset <= (others => '0');
-                if (v_count = v_total) then
-                    v_count <= (others => '0');
-                    char_row <= (others => '0');
-                    row_offset <= (others => '0');
-                    screen_base1  <= screen_base;
-                    mode_base1  <= mode_base;
-                    if (mode = "01") then
-                        -- Interlaced, so alternate odd and even fields
-                        field <= not field;
-                    else
-                        -- Non-interlaced, so odd fields only
-                        field <= '0';
-                    end if;
-                else
-                    v_count <= v_count + 1;
-                    if (v_count(0) = '1' or mode(1) = '0') then
-                        if ((mode_text = '0' and char_row = 7) or (mode_text = '1' and char_row = 9)) then
-                            char_row <= (others => '0');
-                            row_offset <= row_offset + mode_rowstep;
-                        else
-                            char_row <= char_row + 1;
-                            row_offset <= row_offset + 1;
-                        end if;
-                    end if;
-                end if;
             else
                 h_count <= h_count + 1;
-                if ((mode_40 = '0' and h_count(2 downto 0) = "111") or
-                    (mode_40 = '1' and h_count(3 downto 0) = "1111")) then
-                    col_offset <= col_offset + 8;
+            end if;
+
+            -- Pipelined version of h_count by to compensate the register in the RAM
+            h_count1 <= h_count;
+
+            -- Vertical counter, incremented at the end of each line
+            if h_count = h_total then
+                if v_count = v_total then
+                    v_count <= (others => '0');
+                else
+                    v_count <= v_count + 1;
                 end if;
             end if;
+
+            -- Field; field=0 is the (first) odd field, field=1 is the even field
+            if h_count = h_total and v_count = v_total then
+                if mode = "01" then
+                    -- Interlaced, so alternate odd and even fields
+                    field <= not field;
+                else
+                    -- Non-interlaced, so odd fields only
+                    field <= '0';
+                end if;
+            end if;
+
+            -- Char_row counts 0..7 or 0..9 depending on the mode.
+            -- It incremented on the trailing edge of hsync
+            hsync_int_last <= hsync_int;
+            if hsync_int = '1' and hsync_int_last = '0'  then
+                if v_count = v_total then
+                    char_row <= (others => '0');
+                elsif v_count(0) = '1' or mode(1) = '0' then
+                    if last_line = '1' then
+                        char_row <= (others => '0');
+                    else
+                        char_row <= char_row + 1;
+                    end if;
+                end if;
+            elsif mode_text = '0' then
+                -- From the ULA schematics sheet 7, VA3 is a T-type Latch
+                -- with an additional reset input connected to GMODE, so it's
+                -- immediately forced to zero in a graphics mode. This is
+                -- needed for 0xC0DE's Vertical Rupture demo to work.
+                char_row(3) <= '0';
+            end if;
+
+            -- Determine last line of a row
+            if ((mode_text = '0' and char_row = 7) or (mode_text = '1' and char_row = 9)) and (v_count(0) = '1' or mode(1) = '0') then
+                last_line <= '1';
+            else
+                last_line <= '0';
+            end if;
+
+            -- RAM Address, constructed from the local row_addr and byte_addr registers
+            -- Some of this is taken from Hick's efforts to understand the schematics:
+            -- https://www.mups.co.uk/project/hardware/acorn_electron/
+
+            -- At start of the field, update row_addr and byte_addr from the ULA registers 2,3
+            if h_count = h_total and v_count = v_total then
+                row_addr  := screen_base;
+                byte_addr := screen_base & "000";
+            end if;
+
+            -- At the start of hsync,  update the row_addr from byte_addr which
+            -- gets to the start of the next block
+            if hsync_int = '0' and last_line = '1' then
+                row_addr := byte_addr(14 downto 6);
+            end if;
+
+            -- During hsync, reset byte reset back to start of line, unless
+            -- it's the last line
+            if hsync_int = '0' and last_line = '0' then
+                byte_addr := row_addr & "000";
+            end if;
+
+            -- Every 8 or 16 pixels depending on mode/repeats
+            if h_count < h_active then
+                if (mode_40 = '0' and h_count(2 downto 0) = "111") or
+                   (mode_40 = '1' and h_count(3 downto 0) = "1111") then
+                    byte_addr := byte_addr + 1;
+                end if;
+            end if;
+
+            -- Handle wrap-around back to mode_base
+            if byte_addr(14 downto 11) = "0000" then
+                byte_addr := mode_base & byte_addr(10 downto 3);
+            end if;
+
+            -- Screen_addr is the final 15-bit Video RAM address
+            if mode7_enable = '1' then
+                screen_addr <= "11111" & crtc_ma(9 downto 0);
+            else
+                screen_addr <= byte_addr & char_row(2 downto 0);
+            end if;
+
+            -- MiSTer: blanking for the video mixer (the full 640x256 area,
+            -- text modes leave their last 6 lines as border)
+            if (v_count >= v_active_gph) then
+                vblank_int <= '1';
+            else
+                vblank_int <= '0';
+            end if;
+            if (h_count1 >= h_active) then
+                hblank_int <= '1';
+            else
+                hblank_int <= '0';
+            end if;
+
             -- RGB Data
-				if (v_count >= v_display) then
-					vblank <= '1';
-				else
-					vblank <= '0';
-				end if;
-				if (h_count1 >= h_active) then
-					hblank <= '1';
-				else
-					hblank <= '0';
-				end if;
-				
-				
-				
-				
             if (h_count1 >= h_active or (mode_text = '0' and v_count >= v_active_gph) or (mode_text = '1' and v_count >= v_active_txt) or char_row >= 8) then
                 -- blanking and border are always black
                 red_int   <= (others => '0');
                 green_int <= (others => '0');
                 blue_int  <= (others => '0');
-
                 contention <= '0';
             else
-
                 -- Indicate possible memory contention on active scan lines
                 contention <= not mode_40;
                 -- rendering an actual pixel
@@ -1077,84 +1197,70 @@ begin
                     blue_int  <= (others => palette(4)(7));
                 when others =>
                 end case;
+                --green_int <= (not ctrl_caps) & "111"; -- DEBUG make screen green
             end if;
-            -- Vertical Sync
+            -- Vertical Sync, lasts 2.5 lines (160us)
             if (field = '0') then
-                -- first field of interlaced scanning (or non interlaced)
-                -- vsync starts at the begging of the line
-                if (h_count1 = 0) then
-                    if (v_count = vsync_start) then
-                        vsync_int <= '0';
-                    elsif (v_count = vsync_end) then
-                        vsync_int <= '1';
-                    end if;
+                -- first field (odd) of interlaced scanning (or non interlaced)
+                -- vsync starts at the beginning of the line
+                if (h_count1 = 0 and v_count = vsync_start) then
+                    vsync_int <= '0';
+                elsif (h_count1 = ('0' & h_total(10 downto 1)) and v_count = vsync_end) then
+                    vsync_int <= '1';
                 end if;
             else
-                -- second field of intelaced scanning
+                -- second field (even) of intelaced scanning
                 -- vsync starts half way through the line
-                if (h_count1 = ('0' & h_total(10 downto 1))) then
-                    if (v_count = vsync_start) then
-                        vsync_int <= '0';
-                    elsif (v_count = vsync_end) then
-                        vsync_int <= '1';
-                    end if;
+                if (h_count1 = ('0' & h_total(10 downto 1)) and v_count = vsync_start) then
+                    vsync_int <= '0';
+                elsif (h_count1 = 0 and v_count = vsync_end) then
+                    vsync_int <= '1';
                 end if;
             end if;
             -- Horizontal Sync
             if (h_count1 = hsync_start) then
                 hsync_int <= '0';
-                if (v_count = v_display) then
-                    display_intr <= '1';
-                end if;
-                if (v_count = v_rtc) then
-                    rtc_intr <= '1';
-                end if;
             elsif (h_count1 = hsync_end) then
-                hsync_int    <= '1';
+                hsync_int <= '1';
+            end if;
+            -- Display Interrupt, this is co-incident with the leading edge
+            -- of hsync at the end the last active line of display
+            -- (line 249 in text mode or line 255 in graphics mode)
+            if (h_count1 = hsync_start) and ((v_count = v_disp_gph and mode_text = '0') or (v_count = v_disp_txt and mode_text = '1')) then
+                display_intr <= '1';
+            elsif (h_count1 = hsync_end) then
                 display_intr <= '0';
-                rtc_intr     <= '0';
+            end if;
+            -- RTC Interrupt, this occurs 8192us (200 lines) after the end of
+            -- the vsync, and is not co-incident with hsync
+            if (v_count = v_rtc) and ((field = '0' and h_count1 = 0) or (field = '1' and h_count1 = ('0' & h_total(10 downto 1)))) then
+                rtc_intr <= '1';
+            elsif (v_count = 0) then
+                rtc_intr <= '0';
             end if;
         end if;
     end process;
 
-    process (screen_base1, mode_base1, row_offset, col_offset, crtc_ma, mode7_enable)
-        variable tmp: std_logic_vector(15 downto 0);
-    begin
-        tmp := ("0" & screen_base1 & "000000") + row_offset + col_offset;
-        if (tmp(15) = '1') then
-            tmp := tmp + (mode_base1 & "00000000");
-        end if;
-        if mode7_enable = '1' then
-            screen_addr <= "11111" & crtc_ma(9 downto 0);
-        else
-            screen_addr <= tmp(14 downto 0);
-        end if;
-    end process;
+    -- Mode 7: the SAA5050's pixels (clk_24M00 domain) and the 6845's timing
+    red   <= (others => ttxt_r) when mode7_enable = '1' else red_int;
+    green <= (others => ttxt_g) when mode7_enable = '1' else green_int;
+    blue  <= (others => ttxt_b) when mode7_enable = '1' else blue_int;
 
-    red   <= (others => ttxt_r_out) when mode7_enable = '1' else
-             red_int;
+    -- MiSTer: separate syncs in every mode (upstream merges vsync into hsync
+    -- at 15 kHz for a composite-sync RGB output)
+    vsync <= crtc_vsync_n when mode7_enable = '1' else vsync_int;
+    hsync <= crtc_hsync_n when mode7_enable = '1' else hsync_int;
 
-    green <= (others => ttxt_g_out) when mode7_enable = '1' else
-             green_int;
+    -- hblank toggles on every line (sys video_cleaner latches VBlank where
+    -- HBlank falls), so it is the horizontal-only display enable
+    hblank <= not ttxt_hde when mode7_enable = '1' else hblank_int;
+    vblank <= not crtc_vde when mode7_enable = '1' else vblank_int;
+    mode7  <= mode7_enable;
+    -- so the scaler weaves the two fields into one steady picture
+    vfield <= crtc_field when mode7_enable = '1' else field;
 
-    blue  <= (others => ttxt_b_out) when mode7_enable = '1' else
-             blue_int;
-
-	h_cnt<=h_count;
-	v_cnt<=v_count;
-	 -- alanswx -- for some reason this code set's vsync to 1 when it is in
-	 -- 15khz mode, which breaks the MiSTer scaler. For now we are just going to
-	 -- get rid of the logic.
-				 
-    --vsync <= ttxt_vs_out when mode7_enable = '1' else
-    --         '1' when mode(1) = '0' else
-    --         vsync_int;
-    vsync <= vsync_int;
-
-    --hsync <= ttxt_hs_out when mode7_enable = '1' else
-    --         hsync_int and vsync_int when mode(1) = '0' else
-    --         hsync_int;
-    hsync <= hsync_int;
+    h_cnt <= h_count;
+    v_cnt <= v_count;
 
     caps  <= caps_int;
     motor <= motor_int;
@@ -1163,158 +1269,211 @@ begin
 -- clock enable generator
 --------------------------------------------------------
 
-    -- ROM accesses always happen at 2Mhz
-    rom_access <= not ROM_n_int;
-    -- RAM accesses always happen at 1Mhz and subber contention
-    ram_access <= not addr(15);
-    -- IO accesses always happen at 1MHz and don't suffer contention
+    -- Keyboard accesses always need to happen at 1MHz
+    kbd_access <= '1' when addr(15 downto 14) = "10" and page_enable = '1' and page(2 downto 1) = "00" else '0';
 
-    clk_gen1 : process(clk_16M00, RST_n)
+    -- IO accesses always happen at 1MHz (no contention)
+    -- This includes keyboard reads in paged ROM slots 8/9
+    io_access <= '1' when addr(15 downto 8) = x"FC" or addr(15 downto 8) = x"FD" or addr(15 downto 8) = x"FE" or kbd_access = '1' else '0';
+
+    -- ROM accesses always happen at 2MHz (no contention)
+    rom_access <= addr(15) and not io_access;
+
+    -- RAM accesses always happen at 1MHz (with contention)
+    ram_access <= not addr(15);
+
+    clk_gen1 : process(clk_16M00)
     begin
         if rising_edge(clk_16M00) then
-            -- clock state machine
-            if clken_counter(0) = '1' and clken_counter(1) = '1' then
-                case clk_state is
-                when "000" =>
-                    if rom_access = '1' then
-                        -- 2MHz no contention
-                        clk_state <= "001";
-                    else
-                        -- 1MHz, possible contention
-                        clk_state <= "101";
-                    end if;
-                when "001" =>
-                    -- CPU is clocked in this state
-                    clk_state <= "010";
-                when "010" =>
-                    if rom_access = '1' then
-                        -- 2MHz no contention
-                        clk_state <= "011";
-                    else
-                        -- 1MHz, possible contention
-                        clk_state <= "111";
-                    end if;
-                when "011" =>
-                    -- CPU is clocked in this state
-                    clk_state <= "000";
-                when "100" =>
-                    clk_state <= "101";
-                when "101" =>
-                    clk_state <= "110";
-                when "110" =>
-                    if ram_access = '1' and contention2 = '1' then
-                        clk_state <= "111";
-                    else
-                        clk_state <= "011";
-                    end if;
-                when "111" =>
-                    clk_state <= "100";
-                when others => null;
-                end case;
+            -- Synchronize changes in the current speed with a 1MHz clock boundary
+            if clken_counter = "1111" then
+                turbo_sync <= turbo;
             end if;
-            -- clken counter
-            clken_counter <= clken_counter + 1;
+
             -- Synchronize contention signal
             contention1 <= contention;
             contention2 <= contention1;
-            -- 1MHz
-            -- cpu_clken active on cycle 0
-            -- address/data changes on cycle 1
-            cpu_clken_1  <= clken_counter(0) and clken_counter(1) and clken_counter(2) and clken_counter(3);
-            via1_clken_1 <= clken_counter(3);
-				via2_clken_1 <= clken_counter(2);
-            -- 2MHz
-            -- cpu_clken active on cycle 0, 8
-            -- address/data changes on cycle 1, 9
-            cpu_clken_2  <= clken_counter(0) and clken_counter(1) and clken_counter(2);
-            via1_clken_2 <= clken_counter(2);
-				via2_clken_2 <= clken_counter(1);
-            -- 4MHz - no contention
-            -- cpu_clken active on cycle 0, 4, 8, 12
-            -- address/data changes on cycle 1, 5, 9, 13
-            cpu_clken_4  <= clken_counter(0) and clken_counter(1);
-            via1_clken_4 <= clken_counter(1);
-				via2_clken_4 <= clken_counter(0);
+
+            -- clken counter
+            clken_counter <= clken_counter + 1;
+
+            -- Logic to supress cpu cycles
+            case (turbo_sync) is
+                when "00" =>
+                    -- 1MHz No Contention
+                    --    RAM accesses 1MHz
+                    --    ROM accesses 1MHz
+                    --     IO accesses 1MHz
+                    -- cpu_clken active on cycle 0
+                    -- address/data changes on cycle 1
+                    if clken_counter(3 downto 0) = "1111" then
+                        cpu_clken <= '1';
+                    else
+                        cpu_clken <= '0';
+                    end if;
+                    -- No stopping of the clock in this mode
+                    clk_stopped <= "00";
+
+                when "01" =>
+                    -- 2MHz/1MHz with Contention (match original Electron)
+                    --    RAM accesses 1MHz + contention
+                    --    ROM accesses 2MHz
+                    --     IO accesses 1MHz
+                    -- cpu_clken active on cycle 0, 8
+                    -- address/data changes on cycle 1, 9
+                    if clken_counter(2 downto 0) = "111" and clk_stopped = 0 then
+                        cpu_clken <= '1';
+                    else
+                        cpu_clken <= '0';
+                    end if;
+                    -- Stop the clock on RAM or IO accesses, in the same way the ULA does
+                    if clk_stopped = 0 and clken_counter(2 downto 0) = "110" and (ram_access = '1' or io_access = '1') then
+                        clk_stopped <= "01";
+                    elsif clken_counter(3 downto 0) = "1110" and not (ram_access = '1' and contention2 = '1') then
+                        clk_stopped <= "00";
+                    end if;
+
+                when "10" =>
+                    -- 2MHz No Contention
+                    --    RAM accesses 2MHz
+                    --    ROM accesses 2MHz
+                    --     IO accesses 2MHz (or 1MHz if LimitIOSpeed true)
+                    -- cpu_clken active on cycle 0, 8
+                    -- address/data changes on cycle 1, 9
+                    if clken_counter(2 downto 0) = "111" and clk_stopped = 0 then
+                        cpu_clken <= '1';
+                    else
+                        cpu_clken <= '0';
+                    end if;
+                    -- Stop the clock on IO accesses as required
+                    if LimitIOSpeed and clk_stopped = 0 and clken_counter(2 downto 0) = "110" and io_access = '1' then
+                        clk_stopped <= "01";
+                    elsif clken_counter(3 downto 0) = "1110" then
+                        clk_stopped <= "00";
+                    end if;
+                when "11" =>
+                    -- 4MHz No contention
+                    --    RAM accesses 4MHz
+                    --    ROM accesses 4MHz (or 2MHz if LimitROMSpeed true)
+                    --     IO accesses 4MHz (or 1MHz if LimitIOSpeed true)
+                    -- cpu_clken active on cycle 0, 4, 8, 12
+                    -- address/data changes on cycle 1, 5, 9, 13
+                    if clken_counter(1 downto 0) = "11" and clk_stopped = 0 then
+                        cpu_clken <= '1';
+                    else
+                        cpu_clken <= '0';
+                    end if;
+                    -- Stop the clock on ROM or IO accesses as required
+                    if clk_stopped = 0 then
+                        if LimitROMSpeed and rom_access = '1' and clken_counter(1 downto 0) = "10" then
+                            clk_stopped <= "01";
+                        elsif LimitIOSpeed and io_access = '1' and clken_counter(1 downto 0) = "10" then
+                            if clken_counter(3 downto 2) = "00" or clken_counter(3 downto 2) = "11" then
+                                clk_stopped <= "01";
+                            else
+                                clk_stopped <= "10";
+                            end if;
+                        end if;
+                    else
+                        if rom_access = '1' then
+                            if clken_counter(2 downto 0) = "110" then
+                                clk_stopped <= "00";
+                            end if;
+                        else
+                            if clken_counter(3 downto 0) = "1110" then
+                                if clk_stopped(1) = '1' then
+                                    clk_stopped <= "01";
+                                else
+                                    clk_stopped <= "00";
+                                end if;
+                            end if;
+                        end if;
+                    end if;
+                when others =>
+            end case;
+
+            -- Generate clock enables for VIA one cycle before cpu_clken
+            if turbo_sync(1) = '0' or LimitIOSpeed then
+                -- 1MHz
+                via1_clken <= clken_counter(3) and clken_counter(2) and clken_counter(1) and not clken_counter(0);
+                via4_clken <=                                           clken_counter(1) and not clken_counter(0);
+            elsif turbo_sync(0) = '0' then
+                -- 2MHz
+                via1_clken <= clken_counter(2) and clken_counter(1) and not clken_counter(0);
+                via4_clken <=                                           not clken_counter(0);
+            else
+                -- 4MHz
+                via1_clken <= clken_counter(1) and not clken_counter(0);
+                via4_clken <= '1';
+            end if;
+
+            -- MiSTer: via6522 wants both PHI2 edges. via1_clken (above) is the
+            -- falling edge, one cycle before the CPU completes a 1 MHz access;
+            -- the rising edge is half a 1 MHz cycle earlier. LimitIOSpeed keeps
+            -- IO at 1 MHz in every turbo mode.
+            if clken_counter = "0110" then
+                via_rising <= '1';
+            else
+                via_rising <= '0';
+            end if;
+
+            -- Generate cpu_clk
+            if cpu_clken = '1' then
+                if turbo_sync = "11" then
+                    -- 4MHz clock; produce a 125 ns low pulse
+                    clk_counter <= "011";
+                else
+                    -- 1MHz or 2MHz clock; produce a 250 ns low pulse
+                    clk_counter <= "001";
+                end if;
+                cpu_clk <= '0';
+            elsif clk_counter(2) = '0' then
+                clk_counter <= clk_counter + 1;
+            else
+                cpu_clk <= '1';
+            end if;
         end if;
     end process;
 
-    clk_gen2 : process(turbo, clken_counter, clk_state,
-                       cpu_clken_1, cpu_clken_2, cpu_clken_4,
-                       via1_clken_1, via1_clken_2, via1_clken_4,
-							  via2_clken_1, via2_clken_2, via2_clken_4)
-    begin
-        case (turbo) is
-            when "01" =>
-                -- 2Mhz Contention
-                cpu_clken <= '0';
-                via1_clken <= '0';
-					 via2_clken <= '0';
-                if clken_counter(0) = '1' and clken_counter(1) = '1' then
-                    -- 1MHz/2MHz/Stopped
-                    if clk_state = "001" or clk_state = "011" then
-                        cpu_clken <= '1';
-                    end if;
-                    -- 1MHz fixed
-                    --if clk_state = "011" or clk_state = "111" then
-                    --    via1_clken <= '1';
-                    --end if;
-                    via1_clken <= clk_state(1);
-						  via2_clken <= clk_state(0);
-                end if;
-            when "10" =>
-                -- 2Mhz No Contention
-                cpu_clken  <= cpu_clken_2;
-                via1_clken <= via1_clken_2;
-					 via2_clken <= via2_clken_2;
-            when "11" =>
-                -- 4MHz No contention
-                cpu_clken  <= cpu_clken_4;
-                via1_clken <= via1_clken_4;
-					 via2_clken <= via2_clken_4;
-            when others =>
-                -- 1MHz No Contention
-                cpu_clken  <= cpu_clken_1;
-                via1_clken <= via1_clken_1;
-					 via2_clken <= via2_clken_1;
-        end case;
-    end process;
-
     cpu_clken_out  <= cpu_clken;
+    cpu_clk_out    <= cpu_clk;
 
 --------------------------------------------------------
--- Optional MMC Filing System
+-- MMC Filing System (6522 at &FCB0, MMBEEB-style SD card on port B)
 --------------------------------------------------------
+
+    MMCIncluded: if IncludeMMC generate
 
         mc6522_enable  <= '1' when addr(15 downto 4) = x"fcb" else '0';
 
-			via : work.via6522 port map (
-				clock       => clk_16M00,
-				rising      => via2_clken and     via1_clken,
-				falling     => via2_clken and not via1_clken,
-				reset       => not RST_n,
-				addr        => addr(3 downto 0),
-				wen         => mc6522_enable and not R_W_n,
-				ren         => mc6522_enable and     R_W_n,
-				data_in     => data_in(7 downto 0),
-				data_out    => mc6522_data(7 downto 0),
-				port_a_i    => mc6522_porta,
-				port_a_o    => mc6522_porta,
-				port_a_t    => open,
-				port_b_i    => mc6522_portb_in,
-				port_b_o    => mc6522_portb_out,
-				port_b_t    => mc6522_portb_oe,
-				ca1_i       => '0',
-				ca2_i       => mc6522_ca2,
-				ca2_o       => mc6522_ca2,
-				ca2_t       => open,
-				cb1_i       => mc6522_cb1_in,
-				cb1_o       => mc6522_cb1_out,
-				cb1_t       => mc6522_cb1_oe,
-				cb2_i       => mc6522_cb2_in,
-				cb2_o       => open,
-				cb2_t       => open,
-				irq         => mc6522_irq
-			);
+        via : entity work.via6522 port map (
+            clock       => clk_16M00,
+            rising      => via_rising,
+            falling     => via1_clken,
+            reset       => not RST_n,
+            addr        => addr(3 downto 0),
+            wen         => mc6522_enable and not R_W_n,
+            ren         => mc6522_enable and     R_W_n,
+            data_in     => data_in(7 downto 0),
+            data_out    => mc6522_data(7 downto 0),
+            port_a_i    => mc6522_porta,
+            port_a_o    => mc6522_porta,
+            port_a_t    => open,
+            port_b_i    => mc6522_portb_in,
+            port_b_o    => mc6522_portb_out,
+            port_b_t    => mc6522_portb_oe,
+            ca1_i       => '0',
+            ca2_i       => mc6522_ca2,
+            ca2_o       => mc6522_ca2,
+            ca2_t       => open,
+            cb1_i       => mc6522_cb1_in,
+            cb1_o       => mc6522_cb1_out,
+            cb1_t       => mc6522_cb1_oe,
+            cb2_i       => mc6522_cb2_in,
+            cb2_o       => open,
+            cb2_t       => open,
+            irq         => mc6522_irq
+        );
 
         -- loop back data port
         mc6522_portb_in <= mc6522_portb_out;
@@ -1337,50 +1496,181 @@ begin
 
         IRQ_n <= ula_irq_n and not mc6522_irq;
 
+    end generate;
 
+    MMCNotIncluded: if not IncludeMMC generate
 
+        IRQ_n <= ula_irq_n;
 
+    end generate;
 
-        -- disable mode 7
+--------------------------------------------------------
+-- Optional Jafa Mk1 Compatible Mode 7 Implementation (upstream)
+--------------------------------------------------------
+
+    JafaIncluded: if IncludeJafaMode7 generate
+        -- FC1C - Write address register
+        -- FC1D - Write data register
+        -- FC1E - Read status register - only bit 5 (vsync) is implemented
+        -- FC1F - Read data register
+
+        process (clk_16M00)
+        variable counter : std_logic_vector(3 downto 0);
+        begin
+            if rising_edge(clk_16M00) then
+                if counter = "1111" then
+                    crtc_clken <= '1';
+                else
+                    crtc_clken <= '0';
+                end if;
+                counter := counter + 1;
+                -- Generate a cursor signal that is delayed by 2 characters
+                if crtc_clken = '1' then
+                    crtc_cursor1 <= crtc_cursor;
+                    crtc_cursor2 <= crtc_cursor1;
+                end if;
+            end if;
+        end process;
+
+        using_ext_ttxt_clock : if UseTTxtClock generate
+            ttxt_clock <= clk_ttxt;
+            ttxt_clken <= clken_ttxt_12M;
+        end generate;
+
+        using_24mhz_ttxt_clock : if not UseTTxtClock generate
+            -- Use 24 MHz clock and generate 12 MHz enable
+            ttxt_clock <= clk_24M00;
+            process (clk_24M00)
+            begin
+                if rising_edge(clk_24M00) then
+                    ttxt_clken <= not ttxt_clken;
+                end if;
+            end process;
+        end generate;
+
+        crtc_enable <= '1' when addr(15 downto 0) = x"fc1c" or
+                                addr(15 downto 0) = x"fc1d" or
+                                addr(15 downto 0) = x"fc1f"
+                           else '0';
+
+        status_enable <= '1' when addr(15 downto 0) = x"fc1e" else '0';
+
+        status_do <= "00" & crtc_vsync & "00000";
+
+        crtc : entity work.mc6845 port map (
+            CLOCK  => clk_16M00,
+            CLKEN  => crtc_clken,
+            nRESET => RST_n,
+            ENABLE => crtc_enable,
+            R_nW   => R_W_n,
+            RS     => addr(0),
+            DI     => data_in,
+            LPSTB  => '0',
+            DO     => crtc_do,
+            VSYNC  => crtc_vsync,
+            HSYNC  => crtc_hsync,
+            DE     => crtc_de,
+            VDE    => crtc_vde,
+            HDE    => crtc_hde,
+            FIELD  => crtc_field,
+            CURSOR => crtc_cursor,
+            MA     => crtc_ma,
+            RA     => crtc_ra
+        );
+
+        crtc_hsync_n <= not crtc_hsync;
+        crtc_vsync_n <= not crtc_vsync;
+
+        ttxt_glr  <= crtc_hsync_n;
+        ttxt_dew  <= crtc_vsync;
+        ttxt_crs  <= not crtc_ra(0);
+        ttxt_lose <= crtc_de;
+
+        teletext : entity work.saa5050
+        generic map (
+            IncludeTTxtROM => IncludeTTxtROM
+        )
+        port map (
+            CLOCK    => ttxt_clock,
+            CLKEN    => ttxt_clken,
+            nRESET   => RST_n,
+            DI_CLOCK => clk_16M00,
+            DI_CLKEN => '1',
+            DI       => screen_data(6 downto 0),
+            GLR      => ttxt_glr,
+            DEW      => ttxt_dew,
+            CRS      => ttxt_crs,
+            LOSE     => ttxt_lose,
+            HDE      => crtc_hde,
+            R        => ttxt_r_int,
+            G        => ttxt_g_int,
+            B        => ttxt_b_int,
+            Y        => open,
+            DE       => ttxt_de,
+            HDE_OUT  => ttxt_hde,
+            char_rom_we   => char_rom_we,
+            char_rom_addr => char_rom_addr,
+            char_rom_data => char_rom_data
+        );
+
+        -- make the cursor visible
+        ttxt_r <= ttxt_r_int xor crtc_cursor2;
+        ttxt_g <= ttxt_g_int xor crtc_cursor2;
+        ttxt_b <= ttxt_b_int xor crtc_cursor2;
+
+        -- enable mode 7
+        mode7_enable <= crtc_ma(13);
+    end generate;
+
+    JafaNotIncluded: if not IncludeJafaMode7 generate
         mode7_enable <= '0';
+        crtc_vde     <= '0';
+        ttxt_de      <= '0';
+        ttxt_hde     <= '0';
+        crtc_field   <= '0';
+        ttxt_r       <= '0';
+        ttxt_g       <= '0';
+        ttxt_b       <= '0';
+        crtc_hsync_n <= '1';
+        crtc_vsync_n <= '1';
+    end generate;
 
--- JOYSTICK HANDLING - emulation of joystick part of Plus 1
--- from https://github.com/Sector14/acorn-electron-core
--- Gary Preston <gary@mups.co.uk>
-adc : process(clk_16M00, RST_n)
+--------------------------------------------------------
+-- Plus 1 joystick interface (ADC0844 at &FC70, status at &FC72)
+-- from https://github.com/Sector14/acorn-electron-core (Gary Preston)
+--------------------------------------------------------
+
+    -- ADC0844 as MAME models it (devices/machine/adc0844.cpp): a write to
+    -- &FC70 selects the channel and starts a 40 us conversion; at the end the
+    -- result is latched and /INTR goes low (status bit 6 = 0, "conversion
+    -- end"); a read of &FC70 returns the result and sets /INTR high again.
+    adc : process(clk_16M00)
     begin
         if rising_edge(clk_16M00) then
-	  if (addr = x"FC70") then -- read or write and we clear the interrupt
-		plus_1_adc_n_intr <= '1';
-	  else
-		plus_1_adc_n_intr <= '0';
-	  end if; 
-			
-	  --
-	  --  Do we need to delay the joystick?
-	  --
+            if cpu_clken = '1' and addr = x"FC70" then
+                plus_1_adc_n_intr <= '1';
+                if R_W_n = '0' then
+                    adc_chan         <= data_in(3 downto 0);
+                    plus_1_adc_count <= to_unsigned(640, plus_1_adc_count'length);  -- 40 us at 16 MHz
+                end if;
+            elsif plus_1_adc_count /= 0 then
+                plus_1_adc_count <= plus_1_adc_count - 1;
+                if plus_1_adc_count = 1 then
+                    plus_1_adc_n_intr <= '0';
+                    case adc_chan is
+                        when "0100" => plus_1_adc_data <= joystick1_x;  -- ch1 X
+                        when "0101" => plus_1_adc_data <= joystick1_y;  -- ch2 Y
+                        when "0110" => plus_1_adc_data <= joystick2_x;  -- ch3 X
+                        when "0111" => plus_1_adc_data <= joystick2_y;  -- ch4 Y
+                        when others => plus_1_adc_data <= x"80";        -- differential modes not modelled
+                    end case;
+                end if;
+            end if;
+        end if;
+    end process;
 
-          case adc_chan is 
-            -- joy1
-            when "0100" => -- ch1 p15 X
-	  		  plus_1_adc_data   <=joystick1_x;
-            when "0101" => -- ch2 p7  Y            
-	  		  plus_1_adc_data   <=joystick1_y;
-						  
-            -- joy2
-            when "0110" => -- ch3 p12 X
-	  		  plus_1_adc_data   <=joystick2_x;
-            when "0111" => -- ch4 p4  Y
-	  		  plus_1_adc_data   <=joystick2_y;
-            when others => 
-              -- No other mode supported
-              plus_1_adc_data <= x"80"; 
-          end case;
-	end if;
-     end process;
+    -- &FC72: b7 printer busy, b6 ADC /INTR, b5 fire 1, b4 fire 2 (fire bits 0 = pressed), b3-0 read 1
+    -- (Electron AUG; MAME bus/electron/plus1.cpp). joystick*_fire are active high.
+    plus_1_stat_reg <= '1' & plus_1_adc_n_intr & not joystick1_fire & not joystick2_fire & "1111";
 
-plus_1_stat_reg <= '1' & plus_1_adc_n_intr &joystick2_fire & joystick1_fire &"0000";
-
-
-		  
 end behavioral;
