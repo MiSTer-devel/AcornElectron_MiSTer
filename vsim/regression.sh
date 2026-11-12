@@ -125,16 +125,14 @@ if [ -f $SW/mister11/tapes/Boxer_E.zip ] && [ -f $SW/free/0xC0DE6502/machine-aut
 		--screenshot-prefix tape_flappy --stop-at-frame 1000 > "$OUT/tape_flappy.log" 2>&1 &
 fi
 
-# --- 6a. Plus 3 (local software/ only): PRES ADFS 1.15 added as ROM 13
-# (roms/add_rom.py on a copy; it is not in the repo), Plus 3 On, the Acorn
-# Welcome disc (ADFS M .adf) in drive 0: *CAT lists !BOOT Help Library Welcome.
-P3ROM="$SW/commercial/tosec_archive.org_extracted/acorn-electron-games-uef/Acorn Electron - Expansion Carts/Advanced Plus 3 (1988)(P.R.E.S.)/Advanced Plus 3 (1988)(P.R.E.S.).rom"
+# --- 6a. Plus 3 (local software/ only, for the disc): PRES ADFS 1.15 as ROM
+# 13 (in the default image), Plus 3 On, the Acorn Welcome disc (ADFS M .adf)
+# in drive 0: *CAT lists !BOOT Help Library Welcome.
 P3DISC="$SW/commercial/stairwaytohell_extracted/adfs/WelcomeDisc-ADFS_E/WelcomeDisc-ADFS_E.adf"
 PLUS3=0
-if [ -f "$P3ROM" ] && [ -f "$P3DISC" ]; then
+if [ -f "$P3DISC" ]; then
 	PLUS3=1
-	python3 -I ../roms/add_rom.py ../roms/rom_image.bin "$P3ROM" 4 "$OUT/elk_plus3.bin" > /dev/null
-	$SIM --headless --plus3 --rom "$OUT/elk_plus3.bin" --floppy0 "$P3DISC" --key-hold 2 --key-gap 2 \
+	$SIM --headless --plus3 --floppy0 "$P3DISC" --key-hold 2 --key-gap 2 \
 		--send-keys '120:*CAT\n' --screenshot 300 --screenshot-dir "$OUT" --screenshot-prefix plus3_cat \
 		--stop-at-frame 300 > "$OUT/plus3_cat.log" 2>&1 &
 fi

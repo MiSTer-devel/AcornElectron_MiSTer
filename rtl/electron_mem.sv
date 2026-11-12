@@ -8,9 +8,8 @@
 //
 //  ROM image (112 KB, roms/ELK.mif, replaced by OSD Load ROM, index 0):
 //    0 MMFS (slot 4), 1 MOS (slots 8-9: the core maps C000-FFFF there),
-//    2 BASIC (10-11), 3 PRES AP2 (12), 4 Plus 3 ADFS (13, only with the
-//    Plus 3 on; blank in the committed image: roms/add_rom.py adds it to a
-//    build), 5 blank (14), 6 Mode 7 (15).
+//    2 BASIC (10-11), 3 PRES AP2 (12), 4 PRES ADFS 1.15 (13, only with the
+//    Plus 3 on), 5 blank (14), 6 Mode 7 (15).
 //
 //  RAM (128 KB):
 //    0-3  ROMs 0-3: the Plus 1's cartridge sockets (as MAME's plus1.cpp:

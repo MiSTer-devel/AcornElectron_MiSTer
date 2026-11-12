@@ -65,8 +65,9 @@ SHIFT-BREAK (or Autoboot) boots drive 0, `*MOUNT` / `*CAT` / `*DIR` as usual;
 shares &FCC0 with the First Byte joystick, so First Byte reads there are off
 while the Plus 3 is on.
 
-The ADFS ROM is not included. It goes in ROM 13 (slot 4 of the ROM image)
-and only answers while the Plus 3 is on. Either build it in:
+The ADFS ROM, PRES ADFS 1.15 ("Advanced Plus 3", `roms/pres_adfs_1_15.rom`),
+is built in as ROM 13 (slot 4 of the ROM image) and only answers while the
+Plus 3 is on. To use a different ADFS ROM, build it in:
 
 ```
 python3 roms/add_rom.py roms/ELK.mif <your ADFS rom> 4    # then compile
@@ -78,8 +79,6 @@ or, without rebuilding, make a 112 KB ROM image with it and use Load ROM
 ```
 python3 roms/add_rom.py roms/rom_image.bin <your ADFS rom> 4 boot.rom
 ```
-
-Tested with PRES ADFS 1.15 ("Advanced Plus 3").
 
 
 ## Cartridges

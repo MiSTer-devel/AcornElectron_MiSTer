@@ -54,7 +54,7 @@ Run from this directory: `$readmemh` opens `ELK.hex` (made from `../roms/ELK.mif
 | `--peek <frame>:<hex,hex>` / `--dump-ram <frame>:<file>` | read main RAM |
 | `--video-stats` | per field: active lines, active pixels per line, total lines and pixels (`VSTATS_EDGES=<frame>` prints the sync/blank edges of that field) |
 | `--vcheck` | the framework's own `sys/video_mixer.sv` + `video_calc` (from `sys/hps_io.sv`) on the video: what Main reads (`nres` counts the resolution changes Main would report, `hcnt` x `vcnt`) |
-| `--plus3`, `--floppy0 <adf>`, `--floppy1 <adf>` | OSD Plus 3 On (latched at reset); ADFS images in its drives (writes stay in memory). Add an ADFS ROM with `--rom` (`roms/add_rom.py roms/rom_image.bin <rom> 4 out.bin`) |
+| `--plus3`, `--floppy0 <adf>`, `--floppy1 <adf>` | OSD Plus 3 On (latched at reset); ADFS images in its drives (writes stay in memory). The default ROM image has PRES ADFS 1.15 as ROM 13 |
 | `--sd <image>` / `--sd-log` | SD card image for MMFS (`sys/sd_card.sv` + the hps_io block protocol; writes stay in memory). Work in progress: MMFS does not get past CMD0 yet (`--sd-log` decodes the SPI bytes) |
 | `--trace <f.vcd>` | VCD (build with `make TRACE=1`) |
 | `--cpu-trace <frame>[:<n>]` | from that field, keep the last n (4000) opcode fetches and &FE05 writes (`W<val>`); print them as `CPUTRACE` lines at the first BRKs. `TRACE_DUMP_AT=<frame>` also dumps at that field; `TRACE_ALLSEL=1` prints every &FE05 write as `ROMSEL` (else only selects other than ROMs 8 and 12) |

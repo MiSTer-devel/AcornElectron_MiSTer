@@ -10,7 +10,7 @@ cat mmfs_swram.rom             > rom_image.bin
 cat os100.rom                  >> rom_image.bin
 cat Basic2.rom                 >> rom_image.bin
 cat pres_ap2_v1_23.rom         >> rom_image.bin
-cat blank.rom                  >> rom_image.bin
+cat pres_adfs_1_15.rom         >> rom_image.bin
 cat blank.rom                  >> rom_image.bin
 cat M7_191.rom                 >> rom_image.bin
 

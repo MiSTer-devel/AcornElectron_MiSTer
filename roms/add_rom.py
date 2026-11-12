@@ -7,8 +7,8 @@ IMAGE is an srec_cat .mif (roms/ELK.mif; its line layout is kept, so a diff
 shows only the ROM's bytes) or a raw 112 KB .bin. SLOT is the image slot
 (rtl/electron_mem.sv): 4 = ROM 13, the Plus 3's ADFS. OUT defaults to IMAGE.
 
-Used for ROMs that are not in the repository (the Plus 3 ADFS ROM): build
-with a patched copy, never commit it.
+The committed images already carry PRES ADFS 1.15 in slot 4; this swaps in
+another ROM (a different ADFS, say).
 """
 import re
 import sys
