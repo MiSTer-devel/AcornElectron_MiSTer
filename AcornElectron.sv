@@ -92,7 +92,7 @@ parameter CONF_STR = {
 	"P3O[10],Swap joysticks,No,Yes;",
 
 	"P4O[13],Tape audio,Off,On;",
-	"P4O[28],Sound Expansion (Cart 1),Off,On;",
+	"P4O[28],Sound Expansion,Off,On;",
 
 	"P5O[24],Autoboot,On,Off;",
 	"P5O[12],Tape input,File,ADC;",

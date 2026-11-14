@@ -142,7 +142,7 @@ and the Sound Expansion has its own OSD option (below).
 
 ## Sound Expansion cartridge
 
-Audio page: **Sound Expansion (Cart 1)** On adds the Project Expansions /
+Audio page: **Sound Expansion** On adds the Project Expansions /
 Complex Software Systems Sound Expansion: an SN76489 sound chip (the BBC
 Micro's) written at &FC84/&FC85 (v1/v2) or &FC98/&FC99 (v3), and 8 KB of RAM
 at &A000-&BFFF of the Cartridge 1 socket. Load the cartridge's ROM as
