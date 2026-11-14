@@ -56,8 +56,9 @@ black. Patched at &8A00 / &AA00: `ADC &0290` -> `ADC #0` (as `*TV 0`).
 
 ## Plus 3 (ADFS and DFS floppy drives)
 
-Machine page: **Plus 3 (floppy)** On, then Apply and reset. Two rows appear
-on the top page, Floppy 0 and Floppy 1 (Plus 3), for disc images:
+Machine page: **Plus 3 (floppy)** On, then Apply and reset (to keep it on
+after the core is reloaded, use Save settings in the MiSTer menu). Two rows
+appear on the top page, Floppy 0 and Floppy 1 (Plus 3), for disc images:
 
 | Image | Format |
 |---|---|
@@ -67,8 +68,12 @@ on the top page, Floppy 0 and Floppy 1 (Plus 3), for disc images:
 | `.dsd` | DFS, two sides (drive 0 = side 0, drive 2 = side 1) |
 
 The core works the format out from the image itself (ADFS discs have a
-"Hugo" root directory). Writes go back to the image; on a short `.ssd`,
-writes past the end of the file are lost.
+"Hugo" root directory). Writes go back to the image (`*SAVE`, `*COMPACT`,
+`*FORM` work). Many `.ssd` files are cut short after the last used
+sector; they read fine, but MiSTer does not grow the file, so writes past
+its end are lost. To write to one, pad it to full size first (200 KB for
+80 tracks), e.g. `truncate -s 204800 disc.ssd`. A blank 204800-byte file
+formats with `*FORM 80 0`.
 
 Two filing systems come with the Plus 3, both above MMFS:
 
@@ -81,9 +86,8 @@ Two filing systems come with the Plus 3, both above MMFS:
 The disc in drive 0 at BREAK picks which one takes the machine: a `.ssd` or
 `.dsd` makes DFS the boot filing system, anything else ADFS. So mount the
 disc, then SHIFT-BREAK (OSD, or Autoboot) runs its `!BOOT`. A BREAK that
-switches between ADFS and DFS is a cold start (as Ctrl-BREAK); the OSD
-SHIFT-BREAK then boots the disc by itself, from the keyboard press
-SHIFT-BREAK once more. `*CARD` (or
+switches between ADFS and DFS is a cold start (as Ctrl-BREAK); SHIFT-BREAK
+(OSD, or SHIFT+F11) then boots the disc by itself. `*CARD` (or
 Plus 3 Off) brings MMFS back. The Plus 3's control register shares &FCC0
 with the First Byte joystick, so First Byte reads there are off while the
 Plus 3 is on.
@@ -130,10 +134,22 @@ cartridges: type `*ROM`, then `*CAT` to see the files and `CHAIN"name"` to
 run one (`CHAIN""` stops at the locked `!BOOT`; loading from ROM takes a few
 seconds). The Demonstration Cartridge starts by itself.
 
-Cartridges with their own hardware (disc interfaces, sound, RAM or flash
+Cartridges with their own hardware (disc interfaces, RAM or flash
 boards, Click, Commstar, Tube, Mega Games Cartridge) need that hardware and
-do not work here; the Advanced Plus 3's disc side is the built-in Plus 3.
+do not work here; the Advanced Plus 3's disc side is the built-in Plus 3,
+and the Sound Expansion has its own OSD option (below).
 
+
+## Sound Expansion cartridge
+
+Audio page: **Sound Expansion (Cart 1)** On adds the Project Expansions /
+Complex Software Systems Sound Expansion: an SN76489 sound chip (the BBC
+Micro's) written at &FC84/&FC85 (v1/v2) or &FC98/&FC99 (v3), and 8 KB of RAM
+at &A000-&BFFF of the Cartridge 1 socket. Load the cartridge's ROM as
+Cartridge 1, then `*SDON` (v2.0, v3.0): `SOUND` and `ENVELOPE` play through
+the chip, with BBC-style pitches and four channels. Version 1.00 (`*SD ON`)
+does not play here: it only runs when exactly two ROMs use the 100 Hz poll
+(as with the original Acorn Plus 1 ROM), and this core's ROM set differs.
 
 ## Notes from David Wood:
 

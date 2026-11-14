@@ -164,6 +164,17 @@ if [ -f "$DFS_SSD" ] && [ -f "$DFS_DSD" ]; then
 		--stop-at-frame 330 > "$OUT/dfs_dsd_cat2.log" 2>&1 &
 fi
 
+# --- 6c. Sound Expansion cartridge (OSD Audio; MAME's sndexp3 ROM in
+# Cartridge 1): *SDON, then a 5 s SOUND plays through its SN76489 (the sim
+# prints SNDEXP peaks per field with --sndexp).
+SNDEXP_ROM="$SW/mame/electron_cart_x/sndexp3/sound_expansion-3.0.rom"
+SNDEXP=0
+if [ -f "$SNDEXP_ROM" ]; then
+	SNDEXP=1
+	$SIM --headless --key-hold 2 --key-gap 2 --sndexp --cart1 "$SNDEXP_ROM" \
+		--send-keys '110:*SDON\nSOUND1,-15,100,100\n' --stop-at-frame 500 > "$OUT/sndexp.log" 2>&1 &
+fi
+
 # --- 6. OSD CPU speed: a 2000-step FOR loop, centiseconds into &78 --------
 for c in 0 1 2; do
 	$SIM --headless --key-hold 2 --key-gap 2 --cpu-speed $c \
@@ -227,6 +238,12 @@ if [ $PLUS3 = 1 ]; then
 	shot_check plus3_boot dff8407efb64d943 "Plus 3: SHIFT-BREAK boots the ADFS Welcome disc"
 else
 	echo "SKIP  Plus 3 (no ../software)"
+fi
+if [ $SNDEXP = 1 ]; then
+	n=$(grep -c '^SNDEXP frame' "$OUT/sndexp.log")
+	[ "$n" -ge 200 ] && pass "Sound Expansion: SOUND plays through the SN76489 ($n fields)" || fail "Sound Expansion: $n fields with sound, want >= 200"
+else
+	echo "SKIP  Sound Expansion (no ../software/mame/electron_cart_x)"
 fi
 if [ $DFS = 1 ]; then
 	shot_check dfs_ssd_boot 51ae38914a3b9783 "Plus 3 DFS: SHIFT-BREAK boots Egghead (.ssd) to its title"

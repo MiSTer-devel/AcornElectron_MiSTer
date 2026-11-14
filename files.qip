@@ -19,6 +19,12 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/electron_mem.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/dpram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/wd1770.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plus3.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/sndexp.sv
+set_global_assignment -name VERILOG_FILE rtl/jt89/jt89.v
+set_global_assignment -name VERILOG_FILE rtl/jt89/jt89_mixer.v
+set_global_assignment -name VERILOG_FILE rtl/jt89/jt89_noise.v
+set_global_assignment -name VERILOG_FILE rtl/jt89/jt89_tone.v
+set_global_assignment -name VERILOG_FILE rtl/jt89/jt89_vol.v
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/inflate.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/uef_player.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/tape.sv

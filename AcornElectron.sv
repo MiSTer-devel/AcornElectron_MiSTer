@@ -49,7 +49,7 @@ wire [1:0] ar = status[9:8];
 // 10 Swap joysticks, 12 Tape input, 13 Tape audio, 14 Tape overlay (1 = Off),
 // 15 Rewind tape. New: 16-17 CPU speed, 18 Interlace, 19-20 Scale,
 // 22 BREAK, 23 Ctrl-BREAK, 24 Autoboot (1 = Off), 25 SHIFT-BREAK, 26 Tape speed (1 = Normal),
-// 27 Plus 3.
+// 27 Plus 3, 28 Sound Expansion.
 `include "build_id.v" 
 parameter CONF_STR = {
 	"AcornElectron;;",
@@ -92,6 +92,7 @@ parameter CONF_STR = {
 	"P3O[10],Swap joysticks,No,Yes;",
 
 	"P4O[13],Tape audio,Off,On;",
+	"P4O[28],Sound Expansion (Cart 1),Off,On;",
 
 	"P5O[24],Autoboot,On,Off;",
 	"P5O[12],Tape input,File,ADC;",
@@ -251,6 +252,7 @@ electron_osd_buttons osd_buttons
 	.btn_break(status[22]),
 	.btn_ctrl_break(status[23]),
 	.btn_shift_break(status[25]),
+	.ps2_key(ps2_key),
 	.osd_break(osd_break),
 	.osd_ctrl(osd_ctrl),
 	.osd_shift(osd_shift)
@@ -409,6 +411,7 @@ ElectronFpga_core Electron
 
 	.hard_reset_n(~reset),
 	.cold_n(~dfs_swap),
+	.sndexp_ram(status[28]),
 	.osd_break(osd_break),
 	.osd_ctrl(osd_ctrl),
 	.osd_shift(osd_shift),
@@ -483,7 +486,15 @@ wire  audio_snl,audio_snr;
 wire        tape_bit   = status[12] ? adc_cassette_bit : casdout;
 wire [15:0] snd_level  = audio_snl ? 16'h1800 : 16'hE800;            // +/- 0x1800
 wire [15:0] tape_level = ~status[13] ? 16'h0000 : tape_bit ? 16'h0600 : 16'hFA00;
-wire [15:0] audio_mix  = snd_level + tape_level;
+// Sound Expansion cartridge (OSD Audio, rtl/sndexp.sv): SN76489 at &FC84/85 (&FC98/99)
+wire signed [10:0] sndexp_snd;
+sndexp sndexp
+(
+	.clk(clk_sys), .reset(reset), .enable(status[28]),
+	.addr(cpu_addr), .din(exp_cpu_dout), .rnw(exp_cpu_rnw), .clken(exp_cpu_clken),
+	.sound(sndexp_snd)
+);
+wire [15:0] audio_mix  = snd_level + tape_level + {{2{sndexp_snd[10]}}, sndexp_snd, 3'b000};
 
 assign AUDIO_L = audio_mix;
 assign AUDIO_R = audio_mix;

@@ -80,6 +80,8 @@ module emu (
 	output      [7:0] sd_buff_din2,
 	input             sd_buff_wr,
 	input             osd_plus3,        // OSD Plus 3 (status[27], latched at reset)
+	input             osd_sndexp,       // OSD Sound Expansion (status[28])
+	output signed [10:0] dbg_sndexp,    // its SN76489 output
 
 	// sys video_mixer + video_calc, as on MiSTer: what Main reads (--vcheck)
 	input       [4:0] vc_par,
@@ -129,6 +131,7 @@ electron_osd_buttons osd_buttons
 	.btn_break(btn_break),
 	.btn_ctrl_break(btn_ctrl_break),
 	.btn_shift_break(btn_shift_break),
+	.ps2_key(ps2_key),
 	.osd_break(osd_break),
 	.osd_ctrl(osd_ctrl),
 	.osd_shift(osd_shift)
@@ -211,6 +214,7 @@ ElectronFpga_core Electron
 
 	.hard_reset_n(~reset),
 	.cold_n(~dfs_swap),
+	.sndexp_ram(osd_sndexp),
 	.osd_break(osd_break),
 	.osd_ctrl(osd_ctrl),
 	.osd_shift(osd_shift),
@@ -362,8 +366,16 @@ video_calc video_calc
 
 wire [15:0] snd_level  = audio_snl ? 16'h1800 : 16'hE800;   // as AcornElectron.sv (AUDIO_S = 1)
 wire [15:0] tape_level = ~tape_monitor ? 16'h0000 : casdout ? 16'h0600 : 16'hFA00;
-assign AUDIO_L = snd_level + tape_level;
-assign AUDIO_R = snd_level + tape_level;
+wire signed [10:0] sndexp_snd;
+sndexp sndexp
+(
+	.clk(clk_sys), .reset(reset), .enable(osd_sndexp),
+	.addr(cpu_addr), .din(exp_cpu_dout), .rnw(exp_cpu_rnw), .clken(exp_cpu_clken),
+	.sound(sndexp_snd)
+);
+assign dbg_sndexp = sndexp_snd;
+assign AUDIO_L = snd_level + tape_level + {{2{sndexp_snd[10]}}, sndexp_snd, 3'b000};
+assign AUDIO_R = snd_level + tape_level + {{2{sndexp_snd[10]}}, sndexp_snd, 3'b000};
 
 // -------------------------------------------------------------------- tape
 // The same rtl/tape.sv as AcornElectron.sv; a 4 MB array with an SDRAM-like

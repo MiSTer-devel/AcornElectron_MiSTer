@@ -35,6 +35,7 @@ entity ElectronFpga_core is
         -- Hard reset (active low)
         hard_reset_n   : in  std_logic;
         cold_n         : in  std_logic := '1';  -- MiSTer: 0 = make a BREAK a cold start (power-on flag)
+        sndexp_ram     : in  std_logic := '0';  -- MiSTer: Sound Expansion: A000-BFFF of ROMs 2/3 writable
 
         -- Keyboard
         ps2_key        : in  std_logic_vector (10 downto 0);
@@ -381,6 +382,9 @@ begin
                 ext_nWE <= '0';
             elsif cpu_a(14) = '0' and (rom_latch = "1101" or rom_latch = "1110") and cpu_a(13 downto 12) = "11" then
                 -- MiSTer: slots 13/14 B000-BFFF (the DFS's RAM; electron_mem drops ADFS writes)
+                ext_nWE <= '0';
+            elsif cpu_a(14) = '0' and sndexp_ram = '1' and rom_latch(3 downto 1) = "001" and cpu_a(13) = '1' then
+                -- MiSTer: Sound Expansion cartridge in socket 1: its 8K RAM at A000-BFFF
                 ext_nWE <= '0';
             else
                 -- Other slots are read only
