@@ -498,7 +498,7 @@ static void usage() {
 	printf("  --rom <file>                  Load a 112 KB ROM image (ELK.mif layout) at power-on\n");
 	printf("  --cart1 / --cart2 <file>      OSD Cartridge 1 (ROMs 2/3) / 2 (ROMs 0/1) at power-on\n");
 	printf("  --sd <image> [--sd-log]       SD card image for MMFS (MMB / boot.vhd); writes stay in memory\n");
-	printf("  --plus3, --floppy0/1 <adf>    OSD Plus 3 On; ADFS floppy images in drives 0/1\n");
+	printf("  --plus3, --floppy0/1 <img>    OSD Plus 3 On; .adf/.adm/.adl/.ssd/.dsd images in drives 0/1\n");
 	printf("  --tape <file>                 Load a tape (OSD F2) at --tape-frame (default 0)\n");
 	printf("  --tape-frame <n>\n");
 	printf("  --tape-rewind <n>             OSD Stop & Rewind at field n. Repeatable\n");

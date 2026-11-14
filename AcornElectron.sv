@@ -55,8 +55,8 @@ parameter CONF_STR = {
 	"AcornElectron;;",
 	"-;",
 	"SC0,VHD,Pri. disk (MMB);",
-	"H2S1,ADFADL,Floppy 0 (Plus 3);",
-	"H2S2,ADFADL,Floppy 1 (Plus 3);",
+	"H2S1,ADFADMADLSSDDSD,Floppy 0 (Plus 3);",
+	"H2S2,ADFADMADLSSDDSD,Floppy 1 (Plus 3);",
 	"H1F2,UEFCAS,Tape;",
 	"h1-;",
 	"F3,ROMBIN,Cartridge 1;",
@@ -73,7 +73,7 @@ parameter CONF_STR = {
 	"R0,Apply and reset;",
 
 	"P1O[17:16],CPU speed,Normal,2 MHz,4 MHz;",
-	"P1O[27],Plus 3 (ADFS floppy),Off,On;",
+	"P1O[27],Plus 3 (floppy),Off,On;",
 	"P1O[26],Tape speed,8x,Normal;",
 	"P1-;",
 	"P1T[15],Rewind tape;",
@@ -223,6 +223,18 @@ reg [31:0] cfg;
 always @(posedge clk_sys) if (reset) cfg <= status;
 wire pending = (status[18:16] != cfg[18:16]) || (status[27] != cfg[27]);
 wire plus3_on = cfg[27];   // Plus 3 fitted (P1 Machine, applies at reset)
+// Plus 3: a DFS disc (.ssd/.dsd) in drive 0 at reset or BREAK makes DFS the
+// boot filing system (ROM 14, above ADFS); else ADFS is (rtl/electron_mem.sv).
+// Taken when the CPU fetches its reset vector: no ROM runs then, and the MOS
+// scans the ROMs right after.
+wire        plus3_dfs0;
+wire [15:0] cpu_addr;
+reg         dfs_hi = 0;
+always @(posedge clk_sys) if (reset || cpu_addr == 16'hFFFC) dfs_hi <= plus3_dfs0;
+// A BREAK that swaps ADFS and DFS (ROMs 13/14) is made a cold start: each
+// keeps private workspace per ROM number, and after a warm BREAK ADFS found
+// the DFS's ("Bad sum on channel 44", seen on hardware).
+wire dfs_swap = plus3_on && (plus3_dfs0 != dfs_hi);
 
 wire [1:0] cpu_speed = (cfg[17:16] == 2'd0) ? 2'b01 :   // Normal: 2 MHz ROM, 1 MHz contended RAM
                        (cfg[17:16] == 2'd1) ? 2'b10 :   // 2 MHz, no contention
@@ -234,6 +246,8 @@ electron_osd_buttons osd_buttons
 	.clk(clk_sys),
 	.reset(reset),
 	.autoboot(~status[24]),
+	.cpu_addr(cpu_addr),
+	.cold_boot(dfs_swap),
 	.btn_break(status[22]),
 	.btn_ctrl_break(status[23]),
 	.btn_shift_break(status[25]),
@@ -302,7 +316,7 @@ electron_mem electron_mem
 (
 	.clk(clk_sys),
 	.mem_addr(mem_addr), .mem_we_n(mem_we_n), .mem_din(mem_din), .mem_dout(mem_dout),
-	.plus3(plus3_on), .rom_download(rom_download), .cart_download(cart_download),
+	.plus3(plus3_on), .dfs_hi(dfs_hi), .rom_download(rom_download), .cart_download(cart_download),
 	.ioctl_wr(ioctl_wr), .ioctl_addr(ioctl_addr), .ioctl_dout(ioctl_dout),
 	.rom_a(rom_a), .rom_we(rom_we), .rom_d(rom_d), .rom_q(rom_q),
 	.ram_a(ram_a), .ram_we(ram_we), .ram_d(ram_d), .ram_q(ram_q)
@@ -348,10 +362,9 @@ wire show_cas_overlay = ~status[14];
 // analog -127..+127, Y: [15:8], X: [7:0]
 
 // Plus 3: WD1770 floppy interface at &FCC0-&FCC7 (rtl/plus3.sv), drives on
-// image slots 1 and 2; its ADFS ROM is ROM 13 (electron_mem).
+// image slots 1 and 2; its ADFS and DFS ROMs are ROMs 13/14 (electron_mem).
 wire  [7:0] exp_cpu_dout, plus3_dout;
 wire        exp_cpu_rnw, exp_cpu_clken, plus3_sel, plus3_busy;
-wire [15:0] cpu_addr;
 wire [31:0] p3_lba[2];
 wire  [7:0] p3_buff_din[2];
 assign sd_lba[1] = p3_lba[0];
@@ -382,6 +395,7 @@ plus3 #(.CLK_HZ(16000000)) plus3
 	.sd_buff_din(p3_buff_din),
 	.sd_buff_wr(sd_buff_wr),
 	.busy(plus3_busy),
+	.dfs0(plus3_dfs0),
 	.ctrl()
 );
 
@@ -394,6 +408,7 @@ ElectronFpga_core Electron
 	.clk_40M00(clk_40),
 
 	.hard_reset_n(~reset),
+	.cold_n(~dfs_swap),
 	.osd_break(osd_break),
 	.osd_ctrl(osd_ctrl),
 	.osd_shift(osd_shift),

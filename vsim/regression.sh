@@ -135,6 +135,33 @@ if [ -f "$P3DISC" ]; then
 	$SIM --headless --plus3 --floppy0 "$P3DISC" --key-hold 2 --key-gap 2 \
 		--send-keys '120:*CAT\n' --screenshot 300 --screenshot-dir "$OUT" --screenshot-prefix plus3_cat \
 		--stop-at-frame 300 > "$OUT/plus3_cat.log" 2>&1 &
+	# OSD SHIFT-BREAK boots it (the MOS reads SHIFT ~300 ms after BREAK with
+	# the Plus 3's ROMs in: the OSD holds SHIFT for 1 s)
+	$SIM --headless --plus3 --floppy0 "$P3DISC" --osd-shift-break 120 \
+		--screenshot 700 --screenshot-dir "$OUT" --screenshot-prefix plus3_boot \
+		--stop-at-frame 700 > "$OUT/plus3_boot.log" 2>&1 &
+fi
+
+# --- 6b. Plus 3 DFS (local software/: MAME's electron_flop list, unzipped
+# to software/mame/electron_flop_x): ACP 1770 DFS 2.20 is ROM 14 when drive
+# 0 holds a DFS disc at BREAK. SHIFT-BREAK boots Egghead in Space (.ssd, 80
+# tracks) to its title, and the EUG 73 menu
+# (.dsd); *DISC, *CAT 2 lists the .dsd's second side (the disc is mounted
+# after the power-on reset, so ADFS is still the filing system there).
+DFS_SSD="$SW/mame/electron_flop_x/egghead/eggheadinspace-dfs_e.ssd"
+DFS_DSD="$SW/mame/electron_flop_x/eug73d/eug73-dfs_e.dsd"
+DFS=0
+if [ -f "$DFS_SSD" ] && [ -f "$DFS_DSD" ]; then
+	DFS=1
+	$SIM --headless --plus3 --floppy0 "$DFS_SSD" --osd-shift-break 120 \
+		--screenshot 1000 --screenshot-dir "$OUT" --screenshot-prefix dfs_ssd_boot \
+		--stop-at-frame 1000 > "$OUT/dfs_ssd_boot.log" 2>&1 &
+	$SIM --headless --plus3 --floppy0 "$DFS_DSD" --osd-shift-break 120 \
+		--screenshot 1000 --screenshot-dir "$OUT" --screenshot-prefix dfs_dsd_boot \
+		--stop-at-frame 1000 > "$OUT/dfs_dsd_boot.log" 2>&1 &
+	$SIM --headless --plus3 --floppy0 "$DFS_DSD" --key-hold 2 --key-gap 2 \
+		--send-keys '150:*DISC\n*CAT 2\n' --screenshot 330 --screenshot-dir "$OUT" --screenshot-prefix dfs_dsd_cat2 \
+		--stop-at-frame 330 > "$OUT/dfs_dsd_cat2.log" 2>&1 &
 fi
 
 # --- 6. OSD CPU speed: a 2000-step FOR loop, centiseconds into &78 --------
@@ -196,9 +223,17 @@ else
 	echo "SKIP  tapes (no ../software)"
 fi
 if [ $PLUS3 = 1 ]; then
-	shot_check plus3_cat ff8e301a84cdd0fb "Plus 3: ADFS *CAT of the Welcome disc"
+	shot_check plus3_cat d1ac028ccffe1ceb "Plus 3: ADFS *CAT of the Welcome disc"
+	shot_check plus3_boot dff8407efb64d943 "Plus 3: SHIFT-BREAK boots the ADFS Welcome disc"
 else
 	echo "SKIP  Plus 3 (no ../software)"
+fi
+if [ $DFS = 1 ]; then
+	shot_check dfs_ssd_boot 51ae38914a3b9783 "Plus 3 DFS: SHIFT-BREAK boots Egghead (.ssd) to its title"
+	shot_check dfs_dsd_boot 35e54b2765953d51 "Plus 3 DFS: SHIFT-BREAK boots the EUG 73 menu (.dsd)"
+	shot_check dfs_dsd_cat2 85f65b3b129fd473 "Plus 3 DFS: *CAT 2 lists the .dsd's second side"
+else
+	echo "SKIP  Plus 3 DFS (no ../software/mame/electron_flop_x)"
 fi
 peek_check speed0 "90" "CPU speed Normal (cs)"
 peek_check speed1 "67" "CPU speed 2 MHz (cs)"

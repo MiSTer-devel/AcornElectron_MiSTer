@@ -5,10 +5,11 @@
 
 IMAGE is an srec_cat .mif (roms/ELK.mif; its line layout is kept, so a diff
 shows only the ROM's bytes) or a raw 112 KB .bin. SLOT is the image slot
-(rtl/electron_mem.sv): 4 = ROM 13, the Plus 3's ADFS. OUT defaults to IMAGE.
+(rtl/electron_mem.sv): 4 = the Plus 3's ADFS, 5 = its DFS (ROMs 13/14, in
+the order the disc in drive 0 picks). OUT defaults to IMAGE.
 
-The committed images already carry PRES ADFS 1.15 in slot 4; this swaps in
-another ROM (a different ADFS, say).
+The committed images carry PRES ADFS 1.15 in slot 4 and ACP 1770 DFS 2.20 in
+slot 5; this swaps in another ROM (a different ADFS, say).
 """
 import re
 import sys
