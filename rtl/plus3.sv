@@ -11,11 +11,21 @@
 //  in ROM 4, where this core keeps MMFS).
 //
 //  Drives are two MiSTer image slots, 256-byte-sector dumps:
-//    .adf  ADFS S (160 KB, 40 tracks) / M (320 KB, 80 tracks), one side
-//    .adl  ADFS L (640 KB, 80 tracks), two sides interleaved by track
+//    .adf/.adm  ADFS S (160 KB, 40 tracks) / M (320 KB, 80 tracks), one side
+//    .adl       ADFS L (640 KB, 80 tracks), two sides interleaved by track
+//    .ssd       DFS, 10 sectors per track, one side (often cut short)
+//    .dsd       DFS, two sides interleaved by track
+//  The core never sees the file name, so a mount reads the image's first
+//  two blocks: "Hugo" at &201 (the root directory) = ADFS, geometry from
+//  the size; else DFS, 80 tracks of 10 sectors (single density), and two
+//  sides when the image is larger than the side 0 catalogue's sector count
+//  (&106/&107) says one side holds. That sorts all 251 images of MAME's
+//  electron_flop list correctly. Sectors past the end of a short image read
+//  as zeros (Main_MiSTer), and writes there are dropped.
+//  DFS needs a 1770 DFS ROM, e.g. ACP 1770 DFS 2.20 (MAME's ap34 cartridge),
+//  loaded as a cartridge (README).
 //  rtl/wd1770.sv (from the Geneve 9640 core) is the controller; the sector
-//  <-> SD block bridge below is the Geneve core's geneve_disk.sv with the
-//  geometry taken from the image size (ADFS images carry none we can trust).
+//  <-> SD block bridge below is the Geneve core's geneve_disk.sv.
 //============================================================================
 
 module plus3 #(parameter int CLK_HZ = 16000000)
@@ -46,7 +56,8 @@ module plus3 #(parameter int CLK_HZ = 16000000)
 	input             sd_buff_wr,
 
 	output            busy,              // disk activity (LED)
-	output reg  [7:0] ctrl = 8'h00
+	output reg        dfs0 = 0,          // drive 0 holds a DFS disc (.ssd/.dsd): DFS boots (electron_mem)
+	output reg  [7:0] ctrl = 8'h20
 );
 
 wire fdc_sel  = enable && addr[15:2] == 14'h3F31;   // &FCC4-&FCC7
@@ -56,13 +67,22 @@ assign sel  = fdc_sel || ctrl_sel;
 wire [7:0] fdc_dout;
 assign dout = fdc_sel ? fdc_dout : 8'hFF;
 
+`ifdef WD_DEBUG
+always @(posedge clk) if (clken && addr[15:4] == 12'hFCC) $display("PLUS3 %s %04x %02x", rnw ? "R" : "W", addr, rnw ? dout : din);
+`endif
+
 always @(posedge clk) begin
-	if (reset) ctrl <= 8'h00;
+	// Until the first write the 1770 runs (bit 5 = 1), as in MAME: ACP DFS
+	// looks for the chip by writing &5A to the track register and reading it
+	// back, before it ever writes the latch.
+	if (reset) ctrl <= 8'h20;
 	else if (ctrl_sel && clken && !rnw) ctrl <= din;
 end
 
 // ------------------------------------------------------------- the 1770
 wire        img_rd, img_wr, img_ack, img_drive;
+reg         req_rd = 0, req_wr = 0;   // the 1770's one-clock requests, held until served
+reg         req_drv = 0;              // (a probe may be running) with their drive
 wire [15:0] img_lsn;
 wire        buf_wr;
 wire  [7:0] buf_addr, buf_din, buf_dout;
@@ -115,6 +135,12 @@ assign sd_buff_din[1] = blk_qa;
 localparam [2:0] D_IDLE = 0, D_RDREQ = 1, D_RDWAIT = 2, D_COPYOUT = 3, D_COPYIN = 4, D_WRREQ = 5, D_WRWAIT = 6, D_ACK = 7;
 reg  [2:0] st = D_IDLE;
 reg        drv, is_write, ack_seen;
+// image probe (see the header): a mount sets pend; the probe reads blocks 0/1
+reg  [1:0] pend = 0;
+reg [31:0] isize [2];
+reg        probe = 0, pblk;
+reg  [7:0] cat_hi, cat_lo;           // DFS catalogue &106/&107: sectors on side 0
+reg [31:0] hugo;                     // bytes &201-&204
 reg [15:0] lsn;
 reg  [8:0] cnt;
 reg        img_ack_r = 0;
@@ -137,7 +163,7 @@ dpram #(.AW(9)) blk
 	.addr_b(blk_a_b), .din_b(buf_dout), .we_b(blk_we_b), .q_b(blk_qb)                                // the copies
 );
 
-// geometry from the image size
+// ADFS geometry from the image size
 function [11:0] geom(input [31:0] size);   // {sides[1:0], tracks[7:0], spare}
 	if (size > 32'd327680)      geom = {2'd2, 8'd80, 2'd0};   // ADFS L (.adl)
 	else if (size > 32'd163840) geom = {2'd1, 8'd80, 2'd0};   // ADFS M
@@ -146,23 +172,33 @@ endfunction
 
 integer d;
 reg [11:0] g;
+wire [9:0] cat_secs = {cat_hi[1:0], cat_lo};
 always @(posedge clk) begin
-	g = geom(img_size[31:0]);
+	g = geom(isize[drv]);
 	img_ack_r <= 0;
-	for (d = 0; d < 2; d = d + 1)
-		if (img_mounted[d]) begin
-			ready[d]  <= (img_size != 64'd0);
-			wprot[d]  <= img_readonly;
-			spt[d]    <= 8'd16;
-			tracks[d] <= g[9:2];
-			sides[d]  <= g[11:10];
+	if (img_rd) req_rd <= 1'b1;
+	if (img_wr) req_wr <= 1'b1;
+	if (img_rd || img_wr) req_drv <= img_drive;
+	// the probe's bytes, as the block streams in
+	if (probe && sd_buff_wr && sd_ack[drv]) begin
+		if (!pblk) begin
+			if (sd_buff_addr == 9'h106) cat_hi <= sd_buff_dout;
+			if (sd_buff_addr == 9'h107) cat_lo <= sd_buff_dout;
 		end
+		else if (sd_buff_addr >= 9'd1 && sd_buff_addr <= 9'd4) hugo <= {hugo[23:0], sd_buff_dout};
+	end
 	if (reset) begin
-		st <= D_IDLE; sd_rd <= 0; sd_wr <= 0;
+		st <= D_IDLE; sd_rd <= 0; sd_wr <= 0; probe <= 0; req_rd <= 0; req_wr <= 0;
 	end
 	else case (st)
-	D_IDLE: if (img_rd || img_wr) begin
-		drv <= img_drive; lsn <= img_lsn; is_write <= img_wr; st <= D_RDREQ;
+	D_IDLE: if (req_rd || req_wr) begin
+		drv <= req_drv; lsn <= img_lsn; is_write <= req_wr; st <= D_RDREQ;
+		req_rd <= 0; req_wr <= 0;
+	end
+	else if (pend != 2'b00) begin       // probe a new image: block 0, then block 1
+		drv <= pend[0] ? 1'b0 : 1'b1;
+		probe <= 1'b1; pblk <= 1'b0; lsn <= 16'd0; is_write <= 1'b0;
+		st <= D_RDREQ;
 	end
 	D_RDREQ: begin
 		lba_r[drv] <= {17'd0, lsn[15:1]};
@@ -172,6 +208,30 @@ always @(posedge clk) begin
 	end
 	D_RDWAIT: begin
 		if (sd_ack[drv]) begin sd_rd[drv] <= 1'b0; ack_seen <= 1'b1; end
+		else if (ack_seen && probe) begin
+			if (!pblk) begin
+				pblk <= 1'b1; lsn <= 16'd2; st <= D_RDREQ;
+			end else begin
+				if (hugo == "Hugo") begin                  // ADFS
+					spt[drv]    <= 8'd16;
+					tracks[drv] <= g[9:2];
+					sides[drv]  <= g[11:10];
+				end else begin                             // DFS: .ssd / .dsd
+					if (!drv) dfs0 <= 1'b1;
+					spt[drv]    <= 8'd10;
+					tracks[drv] <= 8'd80;
+					sides[drv]  <= (isize[drv] > {14'd0, cat_secs, 8'd0}) ? 2'd2 : 2'd1;
+				end
+`ifdef WD_DEBUG
+				$display("PLUS3 probe drive %0d size %0d: %s, catalogue %0d sectors", drv, isize[drv],
+				         hugo == "Hugo" ? "ADFS" : "DFS", cat_secs);
+`endif
+				ready[drv] <= 1'b1;
+				pend[drv]  <= 1'b0;
+				probe      <= 1'b0;
+				st <= D_IDLE;
+			end
+		end
 		else if (ack_seen) begin cnt <= 9'd0; st <= is_write ? D_COPYIN : D_COPYOUT; end
 	end
 	D_COPYOUT: begin   // block half -> 1770 buffer
@@ -196,6 +256,15 @@ always @(posedge clk) begin
 		st <= D_IDLE;
 	end
 	endcase
+	// a mount (last: it wins over a probe of the same drive finishing now)
+	for (d = 0; d < 2; d = d + 1)
+		if (img_mounted[d]) begin
+			ready[d] <= 1'b0;
+			if (d == 0) dfs0 <= 1'b0;
+			wprot[d] <= img_readonly;
+			isize[d] <= img_size[31:0];
+			pend[d]  <= (img_size != 64'd0);
+		end
 end
 
 endmodule

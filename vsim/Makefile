@@ -94,6 +94,12 @@ V_SRC = \
 	$(RTL)/dpram.sv \
 	$(RTL)/wd1770.sv \
 	$(RTL)/plus3.sv \
+	$(RTL)/sndexp.sv \
+	$(RTL)/jt89/jt89.v \
+	$(RTL)/jt89/jt89_mixer.v \
+	$(RTL)/jt89/jt89_noise.v \
+	$(RTL)/jt89/jt89_tone.v \
+	$(RTL)/jt89/jt89_vol.v \
 	$(RTL)/inflate.sv \
 	$(RTL)/uef_player.sv \
 	$(RTL)/tape.sv \

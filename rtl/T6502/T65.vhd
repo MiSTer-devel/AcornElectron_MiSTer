@@ -1,6 +1,10 @@
 -- ****
 -- T65(b) core. In an effort to merge and maintain bug fixes ....
 --
+-- Ver 315 SzGy April 2020
+--   Reduced the IRQ detection delay when RDY is not asserted (NMI?)
+--   Undocumented opcodes behavior change during not RDY and page boundary crossing (VICE tests - cpu/sha, cpu/shs, cpu/shxy)
+--
 -- Ver 313 WoS January 2015
 --   Fixed issue that NMI has to be first if issued the same time as a BRK instruction is latched in
 --   Now all Lorenz CPU tests on FPGAARCADE C64 core (sources used: SVN version 1021) are OK! :D :D :D
@@ -130,14 +134,16 @@ library IEEE;
 entity T65 is
   port(
     Mode    : in  std_logic_vector(1 downto 0);      -- "00" => 6502, "01" => 65C02, "10" => 65C816
+    BCD_en  : in  std_logic := '1';             -- '0' => 2A03/2A07, '1' => others
+
     Res_n   : in  std_logic;
     Enable  : in  std_logic;
     Clk     : in  std_logic;
-    Rdy     : in  std_logic;
-    Abort_n : in  std_logic;
-    IRQ_n   : in  std_logic;
-    NMI_n   : in  std_logic;
-    SO_n    : in  std_logic;
+    Rdy     : in  std_logic := '1';
+    Abort_n : in  std_logic := '1';
+    IRQ_n   : in  std_logic := '1';
+    NMI_n   : in  std_logic := '1';
+    SO_n    : in  std_logic := '1';
     R_W_n   : out std_logic;
     Sync    : out std_logic;
     EF      : out std_logic;
@@ -152,7 +158,8 @@ entity T65 is
     DO      : out std_logic_vector(7 downto 0);
     -- 6502 registers (MSB) PC, SP, P, Y, X, A (LSB)
     Regs    : out std_logic_vector(63 downto 0);
-    DEBUG   : out T_t65_dbg
+    DEBUG   : out T_t65_dbg;
+    NMI_ack : out std_logic
   );
 end T65;
 
@@ -175,7 +182,10 @@ architecture rtl of T65 is
   signal IR                 : std_logic_vector(7 downto 0);
   signal MCycle             : std_logic_vector(2 downto 0);
 
+  signal DO_r               : std_logic_vector(7 downto 0);
+
   signal Mode_r             : std_logic_vector(1 downto 0);
+  signal BCD_en_r           : std_logic;
   signal ALU_Op_r           : T_ALU_Op;
   signal Write_Data_r       : T_Write_Data;
   signal Set_Addr_To_r      : T_Set_Addr_To;
@@ -184,6 +194,8 @@ architecture rtl of T65 is
   signal RstCycle           : std_logic;
   signal IRQCycle           : std_logic;
   signal NMICycle           : std_logic;
+  signal IRQReq             : std_logic;
+  signal NMIReq             : std_logic;
 
   signal SO_n_o             : std_logic;
   signal IRQ_n_o            : std_logic;
@@ -208,6 +220,7 @@ architecture rtl of T65 is
   signal Write_Data         : T_Write_Data;
   signal Jump               : std_logic_vector(1 downto 0);
   signal BAAdd              : std_logic_vector(1 downto 0);
+  signal BAQuirk            : std_logic_vector(1 downto 0);
   signal BreakAtNA          : std_logic;
   signal ADAdd              : std_logic;
   signal AddY               : std_logic;
@@ -230,12 +243,15 @@ architecture rtl of T65 is
   signal Res_n_i        : std_logic;
   signal Res_n_d        : std_logic;
 
+  signal rdy_mod        : std_logic; -- RDY signal turned off during the instruction
   signal really_rdy     : std_logic;
   signal WRn_i          : std_logic;
 
   signal NMI_entered    : std_logic;
 
 begin
+  NMI_ack <= NMIAct;
+
   -- gate Rdy with read/write to make an "OK, it's really OK to stop the processor 
   really_rdy <= Rdy or not(WRn_i);
   Sync <= '1' when MCycle = "000" else '0';
@@ -265,6 +281,7 @@ begin
       IR          => IR,
       MCycle      => MCycle,
       P           => P,
+      Rdy_mod     => rdy_mod,
 --outputs
       LCycle      => LCycle,
       ALU_Op      => ALU_Op,
@@ -273,6 +290,7 @@ begin
       Write_Data  => Write_Data,
       Jump        => Jump,
       BAAdd       => BAAdd,
+      BAQuirk     => BAQuirk,
       BreakAtNA   => BreakAtNA,
       ADAdd       => ADAdd,
       AddY        => AddY,
@@ -296,6 +314,7 @@ begin
   alu : entity work.T65_ALU
     port map(
       Mode => Mode_r,
+      BCD_en => BCD_en_r,
       Op => ALU_Op_r,
       BusA => BusA_r,
       BusB => BusB,
@@ -327,6 +346,7 @@ begin
       DBR <= (others => '0');
 
       Mode_r <= (others => '0');
+      BCD_en_r <= '1';
       ALU_Op_r <= ALU_OP_BIT;
       Write_Data_r <= Write_Data_DL;
       Set_Addr_To_r <= Set_Addr_To_PBR;
@@ -336,8 +356,18 @@ begin
       MF_i <= '1';
       XF_i <= '1';
 
+      NMICycle <= '0';
+      IRQCycle <= '0';
+
     elsif Clk'event and Clk = '1' then  
       if (Enable = '1') then
+        -- some instructions behavior changed by the Rdy line. Detect this at the correct cycles.
+        if MCycle  = "000" then
+          rdy_mod <= '0';
+        elsif ((MCycle = "011" and IR /= x"93") or (MCycle = "100" and IR = x"93")) and Rdy = '0' then
+          rdy_mod <= '1';
+        end if;
+
         if (really_rdy = '1') then
           WRn_i <= not Write or RstCycle;
 
@@ -349,15 +379,24 @@ begin
 
           if MCycle  = "000" then
             Mode_r <= Mode;
+            BCD_en_r <= BCD_en;
 
-            if IRQCycle = '0' and NMICycle = '0' then
+            if IRQReq = '0' and NMIReq = '0' then
               PC <= PC + 1;
             end if;
 
-            if IRQCycle = '1' or NMICycle = '1' then
+            if IRQReq = '1' or NMIReq = '1' then
               IR <= "00000000";
             else
               IR <= DI;
+            end if;
+
+            IRQCycle <= '0';
+            NMICycle <= '0';
+            if NMIReq = '1' then
+              NMICycle <= '1';
+            elsif IRQReq = '1' then
+              IRQCycle <= '1';
             end if;
 
             if LDS = '1' then -- LAS won't work properly if not limited to machine cycle 0
@@ -376,7 +415,7 @@ begin
           if Inc_S = '1' then
             S <= S + 1;
           end if;
-          if Dec_S = '1' and RstCycle = '0' then
+          if Dec_S = '1' and (RstCycle = '0' or Mode = "00") then -- Decrement during reset - 6502 only?
             S <= S - 1;
           end if;
 
@@ -463,9 +502,6 @@ begin
             --This should happen after P has been pushed to stack
             tmpP(Flag_I) := '1';
           end if;
-          if SO_n_o = '1' and SO_n = '0' then
-            tmpP(Flag_V) := '1';
-          end if;
           if RstCycle = '1' then
             tmpP(Flag_I) := '1';
             tmpP(Flag_D) := '0';
@@ -474,16 +510,16 @@ begin
 
           P<=tmpP;--new way
 
-          SO_n_o <= SO_n;
-          if IR(4 downto 0)/="10000" or Jump/="01" then -- delay interrupts during branches (checked with Lorenz test and real 6510), not best way yet, though - but works...
-            IRQ_n_o <= IRQ_n;
-          end if;
         end if;
-        -- detect nmi even if not rdy
-        if IR(4 downto 0)/="10000" or Jump/="01" then -- delay interrupts during branches (checked with Lorenz test and real 6510) not best way yet, though - but works...
-          NMI_n_o <= NMI_n;
-        end if;
+
       end if;
+      -- act immediately on SO pin change
+      -- The signal is sampled on the trailing edge of phi1 and must be externally synchronized (from datasheet)
+      SO_n_o <= SO_n;
+      if SO_n_o = '1' and SO_n = '0' then
+        P(Flag_V) <= '1';
+      end if;
+
     end if;
   end process;
 
@@ -505,8 +541,8 @@ begin
       DL <= (others => '0');
     elsif Clk'event and Clk = '1' then
       if (Enable = '1') then
-        NMI_entered <= '0';
         if (really_rdy = '1') then
+          NMI_entered <= '0';
           BusA_r <= BusA;
           BusB <= DI;
 
@@ -526,7 +562,13 @@ begin
           when "11" =>
             -- BA Adj
             if BAL(8) = '1' then
-              BAH <= std_logic_vector(unsigned(BAH) + 1);
+              -- Handle quirks with some undocumented opcodes crossing page boundary
+              case BAQuirk is
+              when "00" => BAH <= std_logic_vector(unsigned(BAH) + 1); -- no quirk
+              when "01" => BAH <= std_logic_vector(unsigned(BAH) + 1) and DO_r;
+              when "10" => BAH <= DO_r;
+              when others => null;
+              end case;
             end if;
           when others =>
           end case;
@@ -604,8 +646,10 @@ begin
   -- This is the P that gets pushed on stack with correct B flag. I'm not sure if NMI also clears B, but I guess it does.
   PwithB<=(P and x"ef") when (IRQCycle='1' or NMICycle='1') else P;
 
+  DO <= DO_r;
+
   with Write_Data_r select
-    DO <=
+    DO_r <=
       DL                                  when Write_Data_DL,
       ABC(7 downto 0)                     when Write_Data_ABC,
       X(7 downto 0)                       when Write_Data_X,
@@ -632,29 +676,38 @@ begin
     if Res_n_i = '0' then
       MCycle <= "001";
       RstCycle <= '1';
-      IRQCycle <= '0';
-      NMICycle <= '0';
       NMIAct <= '0';
+      IRQReq <= '0';
+      NMIReq <= '0';
     elsif Clk'event and Clk = '1' then
       if (Enable = '1') then
         if (really_rdy = '1') then
           if MCycle = LCycle or Break = '1' then
             MCycle <= "000";
             RstCycle <= '0';
-            IRQCycle <= '0';
-            NMICycle <= '0';
-            if NMIAct = '1' and IR/=x"00" then -- delay NMI further if we just executed a BRK
-              NMICycle <= '1';
-              NMIAct <= '0'; -- reset NMI edge detector if we start processing the NMI
-            elsif IRQ_n_o = '0' and P(Flag_I) = '0' then
-              IRQCycle <= '1';
-            end if;
           else
             MCycle <= std_logic_vector(unsigned(MCycle) + 1);
           end if;
+
+          if (IR(4 downto 0)/="10000" or Jump/="11") then -- taken branches delay the interrupts
+            if NMIAct = '1' and IR/=x"00" then
+              NMIReq <= '1';
+            else
+              NMIReq <= '0';
+            end if;
+            if IRQ_n_o = '0' and P(Flag_I) = '0' then
+              IRQReq <= '1';
+            else
+              IRQReq <= '0';
+            end if;
+          end if;
         end if;
+
+        IRQ_n_o <= IRQ_n;
+        NMI_n_o <= NMI_n;
+
         --detect NMI even if not rdy    
-        if NMI_n_o = '1' and (NMI_n = '0' and (IR(4 downto 0)/="10000" or Jump/="01")) then -- branches have influence on NMI start (not best way yet, though - but works...)
+        if NMI_n_o = '1' and NMI_n = '0' then
           NMIAct <= '1';
         end if;
         -- we entered NMI during BRK instruction

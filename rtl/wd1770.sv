@@ -2,10 +2,10 @@
 //  WD1770 floppy disk controller, sector level
 //
 //  From the Geneve 9640 core (alanswx/Geneve9640_MiSTer rtl/wd1770.sv, b14a299).
-//  Electron copy: the image layouts are ADFS's (rtl/plus3.sv): sectors 0..15
-//  of 256 bytes; one side = cylinder by cylinder (.adf, ADFS S/M); two sides
-//  = interleaved by track, cylinder 0 side 0, cylinder 0 side 1, ... (.adl,
-//  ADFS L). The sector buffer is a true dual-port block RAM (registered
+//  Electron copy: the image layouts are Acorn's (rtl/plus3.sv): sectors
+//  0..spt-1 of 256 bytes, 16 per track for ADFS, 10 for DFS; one side =
+//  cylinder by cylinder (.adf/.adm, .ssd); two sides = interleaved by track,
+//  cylinder 0 side 0, cylinder 0 side 1, ... (.adl, .dsd). The sector buffer is a true dual-port block RAM (registered
 //  reads: buf_dout follows buf_addr one clock later). The rest is the
 //  Geneve controller unchanged.
 //
@@ -17,8 +17,9 @@
 //                     img_drive; the outside fills the buffer (buf_wr) or
 //                     reads it (buf_addr / buf_dout), then pulses img_ack.
 //
-//  Single density (dden_n = 1) finds sectors only on 9-sector images,
-//  double density only on 16/18-sector images, as on the real medium.
+//  Single density (dden_n = 1) finds sectors only on images of up to 10
+//  sectors per track (DFS), double density only on 16/18-sector images
+//  (ADFS), as on the real medium.
 //  Write track (format) parses the ID fields of the track; from then on the
 //  drive uses the formatted geometry (sectors per track, density, tracks,
 //  sides) instead of the mounted one, until the image changes. The image
@@ -110,7 +111,7 @@ wire [7:0]  hp     = headpos[dn];
 wire [7:0]  d_spt  = fmt_on[dn] ? fmt_spt[dn] : spt[dn];
 wire [7:0]  d_trk  = fmt_on[dn] ? fmt_tracks[dn] : tracks[dn];
 wire [1:0]  d_sides = fmt_on[dn] ? fmt_sides[dn] : sides[dn];
-wire        dens_ok = fmt_on[dn] ? (fmt_dd[dn] == !dden_n) : dden_n ? (d_spt == 8'd9) : (d_spt >= 8'd16);
+wire        dens_ok = fmt_on[dn] ? (fmt_dd[dn] == !dden_n) : dden_n ? (d_spt <= 8'd10) : (d_spt >= 8'd16);
 wire        disk   = dsel && ready[dn];
 wire        index  = disk && motor_on && (index_ctr < 32'(CLK_HZ / 250));   // 4 ms of 200 ms
 

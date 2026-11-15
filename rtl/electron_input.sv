@@ -57,9 +57,21 @@ endmodule
 
 
 // OSD BREAK / Ctrl-BREAK / SHIFT-BREAK (trigger buttons) and Autoboot.
-// BREAK is held for the first 50 ms; CTRL or SHIFT is held for 300 ms, so the
-// MOS still sees it after BREAK is released (CTRL: cold start, SHIFT: run
-// the disk's !BOOT). Autoboot presses SHIFT-BREAK 1.5 s after a power-on
+// BREAK is held for the first 50 ms; CTRL or SHIFT stays down until the MOS
+// has read the keyboard for its boot decision: its reset code scans SHIFT
+// with JSR &E7D1 at &DA56 and goes on at &DA59 (MOS 1.00), after every
+// ROM's reset service calls. That can take well over a second: with the
+// Plus 3 on, ADFS / DFS read the disc first (slow SD round trips through
+// Main_MiSTer), and a fixed 300 ms or 1 s hold missed it - SHIFT-BREAK then
+// did not boot. 3 s timeout, for a replaced MOS (Load ROM).
+// A SHIFT-BREAK that swaps the Plus 3's ADFS and DFS (cold_boot) is a cold
+// start (AcornElectron.sv), and a cold start does not reliably boot (ADFS
+// on hardware did not): it is sent as a plain BREAK, and once the MOS is
+// through its reset (&DA59) a warm SHIFT-BREAK follows 0.5 s later.
+// SHIFT+F11 on the keyboard (F11 = BREAK) is taken as the same SHIFT-BREAK,
+// so a quick tap boots too (the keyboard's own SHIFT is long up when the
+// MOS looks).
+// Autoboot presses SHIFT-BREAK 1.5 s after a power-on
 // reset (MMFS only boots on SHIFT-BREAK, not on SHIFT held at power-on).
 // Not sooner: the MOS's cold start takes about 0.8 s, and a BREAK in the
 // middle of it leaves the keyboard workspace half set up (with the Plus 3's
@@ -70,32 +82,50 @@ module electron_osd_buttons
 	input             clk,
 	input             reset,           // power-on reset
 	input             autoboot,        // OSD Autoboot
+	input      [15:0] cpu_addr,        // the MOS's boot key scan done: CPU at &DA59
+	input             cold_boot,       // the next BREAK swaps ADFS / DFS (a cold start)
 	input             btn_break,       // OSD T bits (level, rising edge acts)
 	input             btn_ctrl_break,
 	input             btn_shift_break,
+	input      [10:0] ps2_key,         // [7:0] code, [8] ext, [9] pressed, [10] toggle
 	output reg        osd_break = 0,
 	output reg        osd_ctrl = 0,
 	output reg        osd_shift = 0
 );
 
 reg  [2:0] old_t;
-reg [22:0] cnt = 0;
+reg [25:0] cnt = 0;
 reg [24:0] boot_wait = 0;
+reg        again = 0;                // SHIFT-BREAK again after this cold start
+
+// keyboard SHIFT+F11
+reg        old_ps2 = 0, lshift = 0, rshift = 0, kb_sb = 0;
+always @(posedge clk) begin
+	old_ps2 <= ps2_key[10];
+	kb_sb <= 0;
+	if (ps2_key[10] != old_ps2 && !ps2_key[8]) begin
+		if (ps2_key[7:0] == 8'h12) lshift <= ps2_key[9];
+		if (ps2_key[7:0] == 8'h59) rshift <= ps2_key[9];
+		if (ps2_key[7:0] == 8'h78 && ps2_key[9] && (lshift || rshift)) kb_sb <= 1;
+	end
+end
 
 wire auto_shift_break = (boot_wait == 25'd1);
+wire scanned = !osd_break && cpu_addr == 16'hDA59;   // after BREAK is let go
 
 always @(posedge clk) begin
 	old_t <= {btn_shift_break, btn_ctrl_break, btn_break};
 	if (cnt) cnt <= cnt - 1'd1;
 	if (boot_wait) boot_wait <= boot_wait - 1'd1;
-	osd_break <= cnt > 23'd4000000;   // 4.8M down to 4.0M: 50 ms
-	if (!cnt) begin osd_ctrl <= 0; osd_shift <= 0; end
-	if (btn_break       & ~old_t[0]) begin cnt <= 23'd4800000; osd_ctrl <= 0; osd_shift <= 0; end
-	if (btn_ctrl_break  & ~old_t[1]) begin cnt <= 23'd4800000; osd_ctrl <= 1; osd_shift <= 0; end
-	if ((btn_shift_break & ~old_t[2]) | auto_shift_break)
-	                                 begin cnt <= 23'd4800000; osd_ctrl <= 0; osd_shift <= 1; end
+	osd_break <= cnt > 26'd47200000;   // 48.0M down to 47.2M: 50 ms
+	if (!cnt || scanned) begin cnt <= 0; osd_ctrl <= 0; osd_shift <= 0; end
+	if (btn_break       & ~old_t[0]) begin cnt <= 26'd48000000; osd_ctrl <= 0; osd_shift <= 0; end
+	if (btn_ctrl_break  & ~old_t[1]) begin cnt <= 26'd48000000; osd_ctrl <= 1; osd_shift <= 0; end
+	if ((btn_shift_break & ~old_t[2]) | auto_shift_break | kb_sb)
+	                                 begin cnt <= 26'd48000000; osd_ctrl <= 0; osd_shift <= ~cold_boot; again <= cold_boot; end
+	if (again && scanned) begin again <= 0; boot_wait <= 25'd8000000; end   // 0.5 s
 	if (reset) begin
-		cnt <= 0; osd_ctrl <= 0; osd_shift <= 0;
+		cnt <= 0; osd_ctrl <= 0; osd_shift <= 0; again <= 0;
 		boot_wait <= autoboot ? 25'd24000000 : 25'd0;  // 1.5 s after the reset ends
 	end
 end

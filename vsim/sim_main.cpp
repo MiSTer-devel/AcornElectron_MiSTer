@@ -263,6 +263,15 @@ static void tick() {
 			}
 			bus.AfterEval();
 			audio.Clock(top->AUDIO_L, top->AUDIO_R);
+			if (top->osd_sndexp) {   // --sndexp: the SN76489's peak per field
+				static int last_f = -1, peak = 0;
+				int v = (int16_t)(top->dbg_sndexp << 5) >> 5; if (v < 0) v = -v;
+				if (v > peak) peak = v;
+				if (video.count_frame != last_f) {
+					if (peak) printf("SNDEXP frame %d peak %d\n", video.count_frame, peak);
+					last_f = video.count_frame; peak = 0;
+				}
+			}
 			main_time++;
 		}
 		if (r48 && top->CE_PIXEL) {
@@ -498,11 +507,12 @@ static void usage() {
 	printf("  --rom <file>                  Load a 112 KB ROM image (ELK.mif layout) at power-on\n");
 	printf("  --cart1 / --cart2 <file>      OSD Cartridge 1 (ROMs 2/3) / 2 (ROMs 0/1) at power-on\n");
 	printf("  --sd <image> [--sd-log]       SD card image for MMFS (MMB / boot.vhd); writes stay in memory\n");
-	printf("  --plus3, --floppy0/1 <adf>    OSD Plus 3 On; ADFS floppy images in drives 0/1\n");
+	printf("  --plus3, --floppy0/1 <img>    OSD Plus 3 On; .adf/.adm/.adl/.ssd/.dsd images in drives 0/1\n");
 	printf("  --tape <file>                 Load a tape (OSD F2) at --tape-frame (default 0)\n");
 	printf("  --tape-frame <n>\n");
 	printf("  --tape-rewind <n>             OSD Stop & Rewind at field n. Repeatable\n");
 	printf("  --tape-monitor                OSD Tape audio: On\n");
+	printf("  --sndexp                      OSD Sound Expansion On (cart 1 RAM, SN76489; prints SNDEXP peaks)\n");
 	printf("  --tape-turbo <n>              OSD Tape speed: n x (UEF only; default Normal)\n");
 	printf("  --reset-at-frame <n>          Pulse reset at field n. Repeatable\n");
 	printf("  --dump-ram <frame>:<file>     Save the 32 KB main RAM. Repeatable\n");
@@ -573,6 +583,7 @@ static int parse_args(int argc, char **argv) {
 		else if (a == "--floppy0") { if (!load_image(1, next())) return 2; }
 		else if (a == "--floppy1") { if (!load_image(2, next())) return 2; }
 		else if (a == "--plus3") top->osd_plus3 = 1;
+		else if (a == "--sndexp") top->osd_sndexp = 1;
 		else if (a == "--cart1") opt_cart[0] = next();
 		else if (a == "--cart2") opt_cart[1] = next();
 		else if (a == "--tape") opt_tape = next();

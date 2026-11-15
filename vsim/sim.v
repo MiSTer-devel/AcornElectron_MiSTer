@@ -80,6 +80,8 @@ module emu (
 	output      [7:0] sd_buff_din2,
 	input             sd_buff_wr,
 	input             osd_plus3,        // OSD Plus 3 (status[27], latched at reset)
+	input             osd_sndexp,       // OSD Sound Expansion (status[28])
+	output signed [10:0] dbg_sndexp,    // its SN76489 output
 
 	// sys video_mixer + video_calc, as on MiSTer: what Main reads (--vcheck)
 	input       [4:0] vc_par,
@@ -112,6 +114,10 @@ reg       cfg_interlace;
 reg [1:0] cfg_speed;
 reg cfg_plus3 = 0;
 always @(posedge clk_sys) if (reset) begin cfg_interlace <= vid_interlaced; cfg_speed <= osd_cpu_speed; cfg_plus3 <= osd_plus3; end
+wire plus3_dfs0;
+reg  dfs_hi = 0;   // as AcornElectron.sv: a DFS disc in drive 0 at reset / BREAK boots DFS
+wire dfs_swap;
+wire [15:0] cpu_addr;
 wire [1:0] cpu_speed = (cfg_speed == 2'd0) ? 2'b01 : (cfg_speed == 2'd1) ? 2'b10 : 2'b11;
 
 wire osd_break, osd_ctrl, osd_shift;
@@ -120,9 +126,12 @@ electron_osd_buttons osd_buttons
 	.clk(clk_sys),
 	.reset(reset),
 	.autoboot(autoboot),
+	.cpu_addr(cpu_addr),
+	.cold_boot(dfs_swap),
 	.btn_break(btn_break),
 	.btn_ctrl_break(btn_ctrl_break),
 	.btn_shift_break(btn_shift_break),
+	.ps2_key(ps2_key),
 	.osd_break(osd_break),
 	.osd_ctrl(osd_ctrl),
 	.osd_shift(osd_shift)
@@ -142,7 +151,7 @@ electron_mem electron_mem
 (
 	.clk(clk_sys),
 	.mem_addr(mem_addr), .mem_we_n(mem_we_n), .mem_din(mem_din), .mem_dout(mem_dout),
-	.plus3(cfg_plus3), .rom_download(rom_download), .cart_download(cart_download),
+	.plus3(cfg_plus3), .dfs_hi(dfs_hi), .rom_download(rom_download), .cart_download(cart_download),
 	.ioctl_wr(ioctl_wr), .ioctl_addr(ioctl_addr), .ioctl_dout(ioctl_dout),
 	.rom_a(rom_a), .rom_we(rom_we), .rom_d(rom_d), .rom_q(rom_q),
 	.ram_a(ram_a), .ram_we(ram_we), .ram_d(ram_d), .ram_q(ram_q)
@@ -192,7 +201,8 @@ wire cas_relay;
 wire casdout;
 wire [10:0] h_cnt;
 wire [9:0]  v_cnt;
-wire [15:0] cpu_addr;
+always @(posedge clk_sys) if (reset || cpu_addr == 16'hFFFC) dfs_hi <= plus3_dfs0;
+assign dfs_swap = cfg_plus3 && (plus3_dfs0 != dfs_hi);   // as AcornElectron.sv: such a BREAK is cold
 
 ElectronFpga_core Electron
 (
@@ -203,6 +213,8 @@ ElectronFpga_core Electron
 	.clk_40M00(1'b0),
 
 	.hard_reset_n(~reset),
+	.cold_n(~dfs_swap),
+	.sndexp_ram(osd_sndexp),
 	.osd_break(osd_break),
 	.osd_ctrl(osd_ctrl),
 	.osd_shift(osd_shift),
@@ -354,8 +366,16 @@ video_calc video_calc
 
 wire [15:0] snd_level  = audio_snl ? 16'h1800 : 16'hE800;   // as AcornElectron.sv (AUDIO_S = 1)
 wire [15:0] tape_level = ~tape_monitor ? 16'h0000 : casdout ? 16'h0600 : 16'hFA00;
-assign AUDIO_L = snd_level + tape_level;
-assign AUDIO_R = snd_level + tape_level;
+wire signed [10:0] sndexp_snd;
+sndexp sndexp
+(
+	.clk(clk_sys), .reset(reset), .enable(osd_sndexp),
+	.addr(cpu_addr), .din(exp_cpu_dout), .rnw(exp_cpu_rnw), .clken(exp_cpu_clken),
+	.sound(sndexp_snd)
+);
+assign dbg_sndexp = sndexp_snd;
+assign AUDIO_L = snd_level + tape_level + {{2{sndexp_snd[10]}}, sndexp_snd, 3'b000};
+assign AUDIO_R = snd_level + tape_level + {{2{sndexp_snd[10]}}, sndexp_snd, 3'b000};
 
 // -------------------------------------------------------------------- tape
 // The same rtl/tape.sv as AcornElectron.sv; a 4 MB array with an SDRAM-like
@@ -452,7 +472,7 @@ plus3 #(.CLK_HZ(16000000)) plus3
 	.img_mounted(img_mounted[2:1]), .img_readonly(img_readonly), .img_size(img_size),
 	.sd_lba(p3_lba), .sd_rd(sd_rd[2:1]), .sd_wr(sd_wr[2:1]), .sd_ack(sd_ack[2:1]),
 	.sd_buff_addr(sd_buff_addr), .sd_buff_dout(sd_buff_dout), .sd_buff_din(p3_buff_din), .sd_buff_wr(sd_buff_wr),
-	.busy(), .ctrl()
+	.busy(), .dfs0(plus3_dfs0), .ctrl()
 );
 
 // ------------------------------------------------------------------- debug

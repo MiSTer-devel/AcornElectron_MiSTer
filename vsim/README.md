@@ -3,7 +3,7 @@
 ```bash
 cd vsim
 make                 # GHDL converts the VHDL core, then Verilator builds obj_dir/Vemu
-./regression.sh      # 35 tests: boot, joysticks, resets, F-keys, CPU speed, MODE 0-7, cartridges, tapes (~8 min, parallel; tapes need ../software)
+./regression.sh      # 40 tests: boot, joysticks, resets, F-keys, CPU speed, MODE 0-7, cartridges, tapes, Plus 3 ADFS + DFS (~10 min, parallel; tapes and discs need ../software, DFS discs ../software/mame/electron_flop_x)
 ./obj_dir/Vemu       # GUI (ImGui window)
 ./obj_dir/Vemu --help
 ```
@@ -54,7 +54,7 @@ Run from this directory: `$readmemh` opens `ELK.hex` (made from `../roms/ELK.mif
 | `--peek <frame>:<hex,hex>` / `--dump-ram <frame>:<file>` | read main RAM |
 | `--video-stats` | per field: active lines, active pixels per line, total lines and pixels (`VSTATS_EDGES=<frame>` prints the sync/blank edges of that field) |
 | `--vcheck` | the framework's own `sys/video_mixer.sv` + `video_calc` (from `sys/hps_io.sv`) on the video: what Main reads (`nres` counts the resolution changes Main would report, `hcnt` x `vcnt`) |
-| `--plus3`, `--floppy0 <adf>`, `--floppy1 <adf>` | OSD Plus 3 On (latched at reset); ADFS images in its drives (writes stay in memory). The default ROM image has PRES ADFS 1.15 as ROM 13 |
+| `--plus3`, `--floppy0 <img>`, `--floppy1 <img>` | OSD Plus 3 On (latched at reset); disc images in its drives: ADFS `.adf`/`.adm`/`.adl` or DFS `.ssd`/`.dsd`, told apart from the contents (writes stay in memory). The default ROM image has PRES ADFS 1.15 and ACP 1770 DFS 2.20; a DFS disc in drive 0 at reset/BREAK makes DFS ROM 14 (the boot filing system), else ADFS. Build with `make EXTRA=+define+WD_DEBUG` (touch sim.v) for the 1770 commands, &FCCx accesses and the mount probe |
 | `--sd <image>` / `--sd-log` | SD card image for MMFS (`sys/sd_card.sv` + the hps_io block protocol; writes stay in memory). Work in progress: MMFS does not get past CMD0 yet (`--sd-log` decodes the SPI bytes) |
 | `--trace <f.vcd>` | VCD (build with `make TRACE=1`) |
 | `--cpu-trace <frame>[:<n>]` | from that field, keep the last n (4000) opcode fetches and &FE05 writes (`W<val>`); print them as `CPUTRACE` lines at the first BRKs. `TRACE_DUMP_AT=<frame>` also dumps at that field; `TRACE_ALLSEL=1` prints every &FE05 write as `ROMSEL` (else only selects other than ROMs 8 and 12) |
